@@ -1,0 +1,10 @@
+{
+  "target": "./dist",
+  "appName": "Defuss Container",
+  "identifier": "org.defuss.container",
+  "version": "0.1.0",
+  "security": "strict",
+  "window": {"title":"Defuss Container","width":1280,"height":860},
+  "assets": {"headers":{"Content-Security-Policy":"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'; frame-src 'none'; base-uri 'none'"}},
+  "rust": {"extensions":[{"path":"./native","package":"defuss-container-desktop-native","capabilities":[{"identifier":"defuss-container-api","windows":["main"],"permissions":["core:default"]}]}]}
+}

@@ -1,0 +1,12 @@
+{
+  "name": "defuss-container-hello",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "bun server.ts",
+    "stop": "bun stop.ts"
+  },
+  "dependencies": {
+    "zod": "4.1.12"
+  }
+}
