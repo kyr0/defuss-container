@@ -184,6 +184,13 @@ pub fn assemble(base: &Base, release: &str, layer: &Path, dest: &Path) -> Result
             crate::ARCHIVE_JS.as_bytes(),
             0o644,
         )?;
+        // VERIFIED: supervisor.mjs imports policy.mjs (packageScript); without it the workload cannot start.
+        append_bytes(
+            &mut t,
+            "opt/defuss/policy.mjs",
+            crate::POLICY_JS.as_bytes(),
+            0o644,
+        )?;
         t.finish()?;
     }
     let mut layers = base.layers.clone();

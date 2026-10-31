@@ -77,6 +77,14 @@ enum Command {
         #[arg(long, default_value_t = 1800)]
         timeout: u64,
     },
+    /// Send one request through the client the desktop bridge uses; prints the response as JSON.
+    Api {
+        method: String,
+        path: String,
+        /// JSON request body
+        #[arg(long)]
+        body: Option<String>,
+    },
 }
 fn main() -> Result<()> {
     let args = Args::parse();
@@ -121,6 +129,16 @@ fn main() -> Result<()> {
         Command::Jobs => client.request("GET", "/v1/jobs", None)?,
         Command::Job { id } => client.request("GET", &format!("/v1/jobs/{id}"), None)?,
         Command::JobLog { id } => client.request("GET", &format!("/v1/jobs/{id}/log"), None)?,
+        Command::Api { method, path, body } => {
+            let body = body.map(|b| serde_json::from_str(&b)).transpose()?;
+            // Always JSON, so a text endpoint (logs) stays distinguishable from objects. VERIFIED: the GUI e2e
+            // bridge (desktop/tests/e2e.test.mjs) parses every response this way.
+            println!(
+                "{}",
+                serde_json::to_string(&client.request(&method, &path, body)?)?
+            );
+            return Ok(());
+        }
         Command::Wait { id, timeout } => {
             uuid::Uuid::parse_str(&id)?;
             let start = std::time::Instant::now();

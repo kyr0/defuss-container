@@ -6,10 +6,12 @@ type App={spec:{name:string;repository:string;git_ref:string;memory_mib:number;c
 type Job={id:string;app:string;state:string;action:{action:string};error:string|null;result:unknown};
 type Release={id:string;commit:string;created_at:number};
 type Backup={id:string;created_at:number;bytes:number};
-let apps:App[]=[];let jobs:Job[]=[];let selected:string|null=null;let online=false;let pending=false;let refreshing=false;
+let apps:App[]=[];let jobs:Job[]=[];let selected:string|null=null;let online=false;let pending=false;let refreshing=false;let failures=0;let timer:ReturnType<typeof setTimeout>|undefined;
 const $=(id:string)=>document.getElementById(id)!;
 const pretty=(v:unknown)=>typeof v==='string'?v:JSON.stringify(v,null,2);
-async function api<T>(method:string,path:string,body?:unknown):Promise<T>{return invoke<T>('daemon_request',{method,path,body:body??null});}
+// The native plugin's command; desktop/defuss-tauri.json grants it to the loopback UI origin.
+const NATIVE_COMMAND='plugin:defuss-container|daemon_request';
+async function api<T>(method:string,path:string,body?:unknown):Promise<T>{return invoke<T>(NATIVE_COMMAND,{method,path,body:body??null});}
 function message(text:string,error=false){$('notice').textContent=text;$('notice').className=error?'notice error':'notice';}
 function details(v:unknown){$('detail-output').textContent=pretty(v);($('detail') as HTMLDialogElement).showModal();}
 function busy(name:string){return jobs.some(j=>j.app===name&&['queued','running'].includes(j.state));}
@@ -17,15 +19,22 @@ async function action(name:string,action:string,extra:Record<string,unknown>={})
   try{const j=await api<Job>('POST',`/v1/apps/${name}/actions`,{action,...extra});message(`${action} queued · ${j.id}`);await refresh();}
   catch(e){message(String(e),true);}
 }
+// Connected: poll every 3 s while visible. Not connected: retry after 1, 2, 4 … 30 s, so a daemon started later is
+// found without a click and a stopped one is not polled every 3 s. Reconnect retries at once and resets the backoff.
+const POLL_MS=3000,RETRY_MS=1000,RETRY_MAX_MS=30000;
+function schedule(){clearTimeout(timer);const ms=online?POLL_MS:Math.min(RETRY_MS*2**Math.max(failures-1,0),RETRY_MAX_MS);timer=setTimeout(()=>{if(online&&document.hidden)schedule();else void refresh();},ms);return ms;}
+function connection(text:string,up:boolean){$('connection').textContent=text;$('connection').className=up?'connection online':'connection';$('reconnect').hidden=up;}
 async function refresh(){
   if(refreshing)return;refreshing=true;
-  try{[apps,jobs]=await Promise.all([api<App[]>('GET','/v1/apps'),api<Job[]>('GET','/v1/jobs')]);if(!online)message('Connected to the local daemon.');online=true;
-    $('connection').textContent='Daemon connected';$('connection').className='connection online';
+  try{[apps,jobs]=await Promise.all([api<App[]>('GET','/v1/apps'),api<Job[]>('GET','/v1/jobs')]);if(!online)message('Connected to the local daemon.');online=true;failures=0;
+    connection('Daemon connected',true);schedule();
     if(!selected&&apps.length)selected=apps[0].spec.name;
     paint();
-  }catch(e){online=false;$('connection').textContent='Daemon unavailable';$('connection').className='connection';message(`${e}. Start the installed daemon service, then reconnect.`,true);}
+  }catch(e){online=false;failures++;const s=schedule()/1000;connection('Daemon unavailable',false);
+    message(`${e}. Start the daemon (make start, or the installed service). Retrying automatically: attempt ${failures}, next in ${s} s.`,true);}
   finally{refreshing=false;}
 }
+function reconnect(){failures=0;connection('Connecting…',false);void refresh();}
 function paint(){
   const running=apps.filter(a=>a.desired_running).length;
   $('count').textContent=String(apps.length);$('running-count').textContent=String(running);$('job-count').textContent=String(jobs.filter(j=>['running','queued'].includes(j.state)).length);
@@ -55,14 +64,16 @@ async function create(event:Event){event.preventDefault();if(pending)return;pend
   try { const spec={name:value('name'),repository:value('repository'),git_ref:value('git_ref')||'HEAD',subdirectory:value('subdirectory'),mounts:value('mounts'),cpus:Number(value('cpus')),memory_mib:Number(value('memory')),storage_gib:20,ports:[{host:Number(value('host_port')),guest:Number(value('guest_port'))}],env:JSON.parse(value('env')||'{}'),build:f.has('build'),health:{port:Number(value('guest_port')),path:value('health')||'/health'},stop_timeout_seconds:30};
   await api('POST','/v1/apps',spec);selected=spec.name;($('create') as HTMLDialogElement).close();message(`Added ${spec.name}. Build its first release.`);await refresh();}catch(e){$('form-error').textContent=String(e);}finally{pending=false;}
 }
-render(<div className="shell"><aside><div className="brand"><span>◈</span> defuss<span className="brand-light">container</span></div><div className="workspace-label">LOCAL WORKSPACE</div><button className="nav active">▦ &nbsp; Applications</button><button className="nav" onClick={async()=>{try{details(await api('GET','/v1/doctor'));}catch(e){message(String(e),true);}}}>⌘ &nbsp; Runtime diagnostics</button><div className="sidebar-bottom"><span className="version">v0.1.0 · Bun 1.4.4</span><span id="connection" className="connection">Connecting…</span><button className="reconnect" onClick={refresh}>Reconnect</button></div></aside><main>
-  <header><div><div className="eyebrow">RUNTIME CONTROL</div><h1>Applications</h1><p>Isolated machines. Persistent data. One local control plane.</p></div><button className="primary" onClick={()=>($('create') as HTMLDialogElement).showModal()}>+ Add application</button></header>
+// VERIFIED: browsers compile `pattern` with the `v` flag, where an unescaped trailing `-` in a class is a syntax
+// error that silently disables the check; the name pattern escapes it (tests/ui.test.mjs).
+render(<div className="shell"><aside><div className="brand"><span>◈</span> defuss<span className="brand-light">container</span></div><div className="workspace-label">LOCAL WORKSPACE</div><button className="nav active">▦ &nbsp; Applications</button><button className="nav" onClick={async()=>{try{details(await api('GET','/v1/doctor'));}catch(e){message(String(e),true);}}}>⌘ &nbsp; Runtime diagnostics</button><div className="sidebar-bottom"><span className="version">v0.1.0 · Bun 1.4.4</span><span id="connection" className="connection">Connecting…</span></div></aside><main>
+  <header><div><div className="eyebrow">RUNTIME CONTROL</div><h1>Applications</h1><p>Isolated machines. Persistent data. One local control plane.</p></div><div className="header-actions"><button id="reconnect" className="reconnect" onClick={reconnect}>Reconnect</button><button className="primary" onClick={()=>($('create') as HTMLDialogElement).showModal()}>+ Add application</button></div></header>
   <div id="notice" className="notice" role="status" aria-live="polite"></div>
   <div className="stats"><div><small>Applications</small><strong id="count">0</strong></div><div><small>Desired running</small><strong id="running-count">0</strong></div><div><small>Active operations</small><strong id="job-count">0</strong></div><div><small>Runtime</small><strong className="text-stat">smolvm <span>1.32.4</span></strong></div></div>
   <div className="workspace"><section className="app-list" id="app-list"></section><section className="panel" id="application"></section></div>
   <section className="activity-panel"><div className="section-heading"><h3>Recent activity</h3><span>Operations continue when this window closes</span></div><div id="activity"></div></section>
 </main><dialog id="create"><form id="create-form" onSubmit={create}><div className="dialog-heading"><h2>Add application</h2><button type="button" onClick={()=>($('create') as HTMLDialogElement).close()}>×</button></div><p>Repository must contain a Bun lockfile and start / stop scripts.</p><div className="form-grid">
-  <label>Name<input name="name" required pattern="[a-z][a-z0-9-]{0,47}" placeholder="my-api"/></label><label>Git ref<input name="git_ref" value="HEAD"/></label>
+  <label>Name<input name="name" required pattern="[a-z][a-z0-9\-]{0,47}" placeholder="my-api"/></label><label>Git ref<input name="git_ref" value="HEAD"/></label>
   <label className="wide">HTTPS Git URL<input name="repository" required type="url" placeholder="https://github.com/your-org/your-api.git"/></label>
   <label className="wide">Absolute host share directory<input name="mounts" required placeholder="/Users/you/defuss/my-api"/></label>
   <label>Repository subdirectory<input name="subdirectory" placeholder="Root by default"/></label><label>Health path<input name="health" value="/health"/></label>
@@ -71,4 +82,4 @@ render(<div className="shell"><aside><div className="brand"><span>◈</span> def
   <label className="wide">Environment / JSON<textarea name="env" rows={3}>{'{"PORT":"3000"}'}</textarea></label><label className="checkbox wide"><input name="build" type="checkbox"/> Run package build script</label>
 </div><p className="muted">Published ports use the engine’s host listener. Apply host firewall rules if access must be limited.</p><pre id="form-error" className="inline-error"></pre><button type="submit" className="primary">Create application</button></form></dialog>
 <dialog id="detail"><div className="dialog-heading"><h2>Details</h2><button onClick={()=>($('detail') as HTMLDialogElement).close()}>Close</button></div><pre id="detail-output"></pre></dialog><dialog id="choice"><div className="dialog-heading"><h2 id="choice-title"></h2><button onClick={()=>($('choice') as HTMLDialogElement).close()}>Close</button></div><div id="choices"></div></dialog></div>,document.getElementById('app'));
-paint();void refresh();setInterval(()=>{if(online&&!document.hidden)void refresh();},3000);
+$('reconnect').hidden=true;paint();void refresh();

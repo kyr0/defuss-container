@@ -131,9 +131,10 @@ fn sqlite_recovers_interrupted_job_and_serializes_app_jobs() {
 #[test]
 fn generated_machine_uses_durable_storage_and_no_shell() {
     let t = tempfile::tempdir().unwrap();
-    let a = app(t.path());
-    let args =
-        Engine::create_args(&a, t.path(), &t.path().join("space directory/image.tar")).unwrap();
+    // The daemon canonicalizes its state root at startup; macOS temp dirs sit below the /var symlink.
+    let root = dunce::canonicalize(t.path()).unwrap();
+    let a = app(&root);
+    let args = Engine::create_args(&a, &root, &root.join("space directory/image.tar")).unwrap();
     assert!(args.windows(2).any(|a| a == ["--disk-durability", "full"]));
     assert!(args.windows(2).any(|a| a == ["--volume", "/app/var"]));
     assert!(

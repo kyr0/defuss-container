@@ -29,17 +29,19 @@ async fn daemon_request(
     .map_err(|e| e.to_string())?
 }
 pub fn defuss_tauri_extend(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wry> {
-    builder
-        .plugin(
-            tauri::plugin::Builder::<tauri::Wry>::new("defuss-origin")
-                .on_navigation(|_, url| {
-                    if url.scheme() != "http" || url.host_str() != Some("127.0.0.1") {
-                        return false;
-                    }
-                    let origin = url.origin().ascii_serialization();
-                    UI_ORIGIN.get_or_init(|| origin.clone()) == &origin
-                })
-                .build(),
-        )
-        .invoke_handler(tauri::generate_handler![daemon_request])
+    // VERIFIED: defuss-tauri serves the UI from http://127.0.0.1:<port>, which Tauri 2.12.1 treats as a remote
+    // origin; app commands from a remote origin are rejected ("not allowed by ACL") unless a capability grants a
+    // permission. A plugin command has one (`defuss-container:allow-daemon-request`), an app command has none.
+    builder.plugin(
+        tauri::plugin::Builder::<tauri::Wry>::new("defuss-container")
+            .invoke_handler(tauri::generate_handler![daemon_request])
+            .on_navigation(|_, url| {
+                if url.scheme() != "http" || url.host_str() != Some("127.0.0.1") {
+                    return false;
+                }
+                let origin = url.origin().ascii_serialization();
+                UI_ORIGIN.get_or_init(|| origin.clone()) == &origin
+            })
+            .build(),
+    )
 }

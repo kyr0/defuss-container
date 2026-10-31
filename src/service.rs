@@ -107,16 +107,19 @@ impl Service {
             let task = tokio::task::spawn_blocking(move || {
                 j.state = "running".into();
                 owner.store.save_job(&j)?;
+                tracing::info!(job = %j.id, app = %j.app, action = ?j.action, "job started");
                 let result = owner.perform(&j);
                 j.completed_at = Some(util::now());
                 match result {
                     Ok(v) => {
                         j.state = "succeeded".into();
                         j.result = Some(v);
+                        tracing::info!(job = %j.id, app = %j.app, "job succeeded");
                     }
                     Err(e) => {
                         j.state = "failed".into();
                         j.error = Some(format!("{e:#}"));
+                        tracing::warn!(job = %j.id, app = %j.app, error = %format!("{e:#}"), "job failed");
                         if let Ok(mut a) = owner.store.app(&j.app) {
                             a.last_error = j.error.clone();
                             let _ = owner.store.save_app(&a);
@@ -305,8 +308,7 @@ impl Service {
         // Always clean the build VM, including a partially successful create/start.
         let result = (|| -> Result<()> {
             self.engine.call(&args, 300, Some(log))?;
-            self.engine
-                .machine("start", &builder, &["--no-workload".into()], 300, Some(log))?;
+            self.engine.start_no_workload(&builder, 300, Some(log))?;
             self.engine.exec(
                 &builder,
                 &[
@@ -496,7 +498,27 @@ impl Service {
                         }
                     }
                 }
-                Err(e) => last = e.to_string(),
+                Err(e) => {
+                    // VERIFIED: `--stop-on-exit` powers the machine off when the workload exits, so the probe can no
+                    // longer reach the supervisor's status. A stopped machine cannot become ready: fail now
+                    // instead of waiting out the timeout.
+                    if !self.engine.is_running(&app.machine).unwrap_or(true) {
+                        let logs = self
+                            .engine
+                            .machine(
+                                "logs",
+                                &app.machine,
+                                &["--tail".into(), "100".into()],
+                                15,
+                                Some(log),
+                            )
+                            .unwrap_or_default();
+                        anyhow::bail!(
+                            "application exited during readiness; machine stopped: {logs}"
+                        );
+                    }
+                    last = e.to_string();
+                }
             }
             std::thread::sleep(Duration::from_millis(500));
         }
@@ -516,14 +538,7 @@ impl Service {
         ensure!(self.engine.exists(&app.machine)?, "no machine to maintain");
         self.engine
             .stop(&app.machine, app.spec.stop_timeout_seconds + 5, Some(log))?;
-        self.engine.machine(
-            "start",
-            &app.machine,
-            &["--no-workload".into()],
-            180,
-            Some(log),
-        )?;
-        Ok(())
+        self.engine.start_no_workload(&app.machine, 180, Some(log))
     }
     fn backup_current(&self, app: &Application, log: &Path) -> Result<Value> {
         let id = uuid::Uuid::new_v4().to_string();
@@ -733,11 +748,20 @@ if verb=='ls':
  if s['exists']:print('defuss-test')
 elif verb=='status':print(json.dumps({'state':'Running' if s['running'] else 'Stopped'}))
 elif verb=='create':s['exists']=True
-elif verb=='start':s['running']=True
+elif verb=='start':
+ launch=json.loads((root.parent/'state/apps/hello/control/launch.json').read_text())
+ crash=(root/'crash-release').read_text() if (root/'crash-release').exists() else ''
+ # A crashing workload with --stop-on-exit powers the machine off right after start.
+ s['running']='--no-workload' in args or launch['release']!=crash
+ if '--no-workload' in args and (root/'exec-not-ready').exists():(root/'exec-pending').write_text((root/'exec-not-ready').read_text())
 elif verb=='stop':s['running']=False
 elif verb=='delete':s['exists']=False
 elif verb=='logs':print('fixture logs')
 elif verb=='exec':
+ if not s['running']:sys.stderr.write('machine is not running\n');sys.exit(1)
+ pending=int((root/'exec-pending').read_text()) if (root/'exec-pending').exists() else 0
+ if pending:(root/'exec-pending').write_text(str(pending-1));sys.stderr.write('executable file `/usr/local/bin/bun` not found in $PATH\n');sys.exit(255)
+ if args[-1]=='--version':print('1.4.4');state.write_text(json.dumps(s));sys.exit(0)
  launch=json.loads((root.parent/'state/apps/hello/control/launch.json').read_text())
  command=args[args.index('--')+1:]
  if command[-1]=='probe':
@@ -814,6 +838,38 @@ state.write_text(json.dumps(s))
         let launch: Value =
             util::read_json(&h.service.app_dir("hello").join("control/launch.json")).unwrap();
         assert_eq!(launch["release"], a.id);
+        assert!(h.service.engine.is_running("defuss-test").unwrap());
+    }
+    #[test]
+    fn workload_that_stops_the_machine_fails_fast_and_restores_previous() {
+        let mut h = harness();
+        let a = release(&h, "base");
+        let b = release(&h, "base");
+        let log = h.fake.join("log");
+        h.service.deploy(&mut h.app, &a.id, &log).unwrap();
+        fs::write(h.fake.join("crash-release"), &b.id).unwrap();
+        let started = Instant::now();
+        let err = h.service.deploy(&mut h.app, &b.id, &log).unwrap_err();
+        // Readiness gives up after 60 s; a stopped machine must not wait for that.
+        assert!(
+            started.elapsed() < Duration::from_secs(20),
+            "took {:?}",
+            started.elapsed()
+        );
+        assert!(format!("{err:#}").contains("machine stopped"), "{err:#}");
+        assert_eq!(h.app.active_release, Some(a.id));
+        assert!(h.service.engine.is_running("defuss-test").unwrap());
+    }
+    #[test]
+    fn backup_waits_until_a_provision_only_start_accepts_exec() {
+        let mut h = harness();
+        let a = release(&h, "base");
+        let log = h.fake.join("log");
+        h.service.deploy(&mut h.app, &a.id, &log).unwrap();
+        // The first two execs after `start --no-workload` fail as the engine was observed to do once.
+        fs::write(h.fake.join("exec-not-ready"), "2").unwrap();
+        let backup = h.service.backup(&mut h.app, &log).unwrap();
+        assert_eq!(h.service.backups("hello").unwrap()[0]["id"], backup["id"]);
         assert!(h.service.engine.is_running("defuss-test").unwrap());
     }
     #[test]

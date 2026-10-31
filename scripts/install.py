@@ -14,8 +14,8 @@ SHA={
 def default_home():
  if os.environ.get('DEFUSS_CONTAINER_HOME'):return pathlib.Path(os.environ['DEFUSS_CONTAINER_HOME']).expanduser()
  if sys.platform=='darwin':return pathlib.Path.home()/'Library/Application Support/defuss-container'
- if sys.platform=='win32':return pathlib.Path(os.environ['LOCALAPPDATA'])/'defuss-container'
- return pathlib.Path(os.environ.get('XDG_DATA_HOME',str(pathlib.Path.home()/'.local/share')))/'defuss-container'
+ if sys.platform=='win32':return pathlib.Path(os.environ.get('LOCALAPPDATA') or pathlib.Path.home()/'AppData/Local')/'defuss-container'
+ return pathlib.Path(os.environ.get('XDG_DATA_HOME') or pathlib.Path.home()/'.local/share')/'defuss-container'
 def run(args,**kw):return subprocess.run([str(x) for x in args],check=True,**kw)
 def private(path):
  path.mkdir(parents=True,exist_ok=True)
@@ -97,10 +97,12 @@ def main():
  engine=engine_install(home,system,arch)
  if not a.engine_only:
   root=pathlib.Path(__file__).resolve().parents[1];run(['cargo','build','--release','--locked','--manifest-path',root/'Cargo.toml'],cwd=root);private(home/'bin')
-  # Ask Cargo: CARGO_TARGET_DIR or build.target-dir can move binaries out of ./target.
+  # VERIFIED: with CARGO_TARGET_DIR (or build.target-dir) set, binaries are not in ./target; ask Cargo.
   target=pathlib.Path(json.loads(run(['cargo','metadata','--format-version','1','--no-deps','--manifest-path',root/'Cargo.toml'],cwd=root,capture_output=True).stdout)['target_directory'])/'release'
+  # Copy, then rename over the old file: the daemon may be running from home/bin (`make start`). VERIFIED (open(2)):
+  # opening a running executable for writing fails on Linux with ETXTBSY. A rename leaves the process its old inode.
   for name in ['defuss-container','defuss-containerd']:
-   name+= '.exe' if system=='windows' else '';shutil.copy2(target/name,home/'bin'/name)
+   name+= '.exe' if system=='windows' else '';staged=home/'bin'/f'.{name}.new';shutil.copy2(target/name,staged);os.replace(staged,home/'bin'/name)
   if a.service:service_install(home,system)
  print(json.dumps({'home':str(home),'engine':str(engine),'service_installed':a.service and not a.engine_only,'bin':str(home/'bin')},indent=2))
 if __name__=='__main__':main()

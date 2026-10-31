@@ -17,13 +17,20 @@ struct Args {
     home: PathBuf,
     #[arg(long, env = "DEFUSS_CONTAINER_ENGINE")]
     engine: Option<PathBuf>,
-    #[arg(long, default_value_t = 0)]
+    /// Loopback API port; 0 lets the OS pick one (tests). Clients find it in connection.json either way.
+    #[arg(long, env = "DEFUSS_CONTAINER_PORT", default_value_t = 63705)]
     port: u16,
 }
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Plain text when stdout is a log file (launchd, systemd, e2e): escape codes are noise there.
+    // VERIFIED: without RUST_LOG the daemon logged nothing, and the service units set none; default to info.
     tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stdout()))
         .init();
     let args = Args::parse();
     util::private_dir(&args.home)?;
@@ -50,8 +57,14 @@ async fn main() -> Result<()> {
         std::env::current_dir()?.join(engine)
     };
     let service = Arc::new(Service::open(home.clone(), engine)?);
-    let listener =
-        tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, args.port)).await?;
+    let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, args.port))
+        .await
+        .with_context(|| {
+            format!(
+                "cannot bind 127.0.0.1:{}; choose another port with --port or DEFUSS_CONTAINER_PORT (0 = any free port)",
+                args.port
+            )
+        })?;
     let address = listener.local_addr()?;
     ensure!(address.ip().is_loopback(), "daemon must bind loopback");
     let token_path = home.join("token");

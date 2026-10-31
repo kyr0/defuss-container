@@ -3,9 +3,14 @@ name = "defuss-container-desktop-native"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
+# Tauri names the plugin after `links` (tauri-plugin-<name>) and passes the permission files that build.rs
+# generates to the host's tauri-build, which is how a capability can grant `defuss-container:allow-daemon-request`.
+links = "tauri-plugin-defuss-container"
 [workspace]
 [dependencies]
 defuss-container = { path = "../.." }
 tauri = { version = "=2.12.1", default-features = false, features = ["wry"] }
 serde_json = "1"
 url = "2"
+[build-dependencies]
+tauri-plugin = { version = "=2.7.1", features = ["build"] }

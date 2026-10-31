@@ -60,8 +60,10 @@ pub fn run(
     ] {
         c.env_remove(key);
     }
+    // VERIFIED: smolvm wrote ANSI color codes into job logs; NO_COLOR=1 keeps them plain (none in e2e logs).
     c.env("GIT_TERMINAL_PROMPT", "0")
-        .env("GIT_CONFIG_NOSYSTEM", "1");
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("NO_COLOR", "1");
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;

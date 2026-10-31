@@ -111,7 +111,7 @@ impl Engine {
         json!({"provider":self.platform().name(),"architecture":std::env::consts::ARCH,"expected_engine":ENGINE_VERSION,
           "engine":self.executable,"version":version.as_ref().ok().map(|s|s.trim()),"engine_error":version.err().map(|e|e.to_string()),
           "hypervisor_ready":prerequisite.is_ok(),"hypervisor_error":prerequisite.err().map(|e|e.to_string()),
-          "note":"Prerequisite checks do not prove VM boot or volume correctness. Run scripts/vm-smoke.py."})
+          "note":"Prerequisite checks do not prove VM boot or volume correctness. Run make e2e (tests/e2e/run.py)."})
     }
     pub fn call(&self, args: &[String], seconds: u64, log: Option<&Path>) -> Result<String> {
         process::checked(
@@ -180,6 +180,24 @@ impl Engine {
         let mut a = vec!["--".into()];
         a.extend_from_slice(cmd);
         self.machine("exec", name, &a, seconds, log)
+    }
+    /// Boots the machine without its workload and returns once its container accepts exec.
+    ///
+    /// VERIFIED: once in about 30 maintenance starts (macOS, 2026-10-31) an exec issued right after smolvm 1.32.4
+    /// reported the provision-only start failed with "executable file `/usr/local/bin/bun` not found"; a later exec
+    /// works. UNKNOWN: the engine-side cause. Waiting on `bun --version` turns that race into a bounded delay.
+    pub fn start_no_workload(&self, name: &str, seconds: u64, log: Option<&Path>) -> Result<()> {
+        self.machine("start", name, &["--no-workload".into()], seconds, log)?;
+        let started = std::time::Instant::now();
+        loop {
+            match self.exec(name, &[crate::BUN.into(), "--version".into()], 30, None) {
+                Ok(_) => return Ok(()),
+                Err(e) if started.elapsed() >= Duration::from_secs(30) => {
+                    return Err(e.context("machine started but its container never accepted exec"));
+                }
+                Err(_) => std::thread::sleep(Duration::from_millis(250)),
+            }
+        }
     }
     pub fn create_args(app: &Application, root: &Path, image: &Path) -> Result<Vec<String>> {
         let dir = root.join("apps").join(&app.spec.name);

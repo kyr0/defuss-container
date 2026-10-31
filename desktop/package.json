@@ -1,21 +1,27 @@
 {
   "name": "defuss-container-desktop",
   "version": "0.1.0",
+  "description": "defuss-container desktop client: defuss UI packaged with defuss-tauri",
+  "license": "MIT",
+  "author": "Aron Homberg",
+  "packageManager": "bun@1.4.4",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc --noEmit && vite build",
-    "prepare:host": "npm run build && defuss-tauri build --prepare-only",
-    "desktop": "npm run build && defuss-tauri build",
-    "test:ui": "npm run build && node --test tests/ui.test.mjs"
+    "lint": "oxlint --deny-warnings src tests",
+    "prepare:host": "bun run build && defuss-tauri build --prepare-only",
+    "desktop": "bun run build && defuss-tauri build",
+    "test:ui": "bun run build && node --test tests/ui.test.mjs"
   },
   "dependencies": {
-    "@tauri-apps/api": "2.9.0",
+    "@tauri-apps/api": "2.12.1",
     "defuss": "3.4.9"
   },
   "devDependencies": {
     "defuss-tauri": "0.3.0",
+    "oxlint": "1.90.0",
     "playwright": "1.56.1",
     "typescript": "5.9.3",
     "vite": "7.1.12"

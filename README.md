@@ -10,7 +10,7 @@ This is the first source release. Core tests and UI build are automated and pass
 - `defuss-container`: HTTP client for create, list, inspect, build, deploy, start, stop, rollback, backup, restore, logs and jobs.
 - Desktop: defuss frontend + defuss-tauri 0.3.0 static-assets host. A small Rust extension reads local connection credentials and forwards HTTP requests. Closing the GUI does not stop the daemon or machines.
 - Linux KVM, macOS HVF and Windows WHP provider preflights, sharing a pinned engine CLI adapter.
-- HTTPS Git fetch → immutable commit → safe source archive → disposable Bun build VM → digest-verified OCI archive. Repository scripts never execute on the host.
+- Builds fetch over HTTPS Git, pin an immutable commit, archive the source safely, build in a disposable Bun VM and produce a digest-verified OCI archive. Repository scripts never execute on the host.
 - Full-durability guest storage; read-only input/config shares; writable output share; guest hostname `host` maps to the physical host through the virtio-net gateway.
 - Graceful `stop` script + SIGTERM + bounded forced shutdown; health-gated deployment with application-code rollback.
 - Consistent application-data backups while the workload is stopped, checksummed restore, pre-restore safety backup.
@@ -24,7 +24,7 @@ This is the first source release. Core tests and UI build are automated and pass
 | macOS Apple Silicon | Hypervisor.framework; the pinned smolvm bundle (ad-hoc signed with the hypervisor entitlement) installed by `scripts/install.py`, not a browser download. See [macOS notes](docs/VERIFICATION.md#macos-notes) |
 | Windows x86_64 | Windows Hypervisor Platform enabled, hardware virtualization enabled, reboot if required |
 
-Development: Rust 1.99.1 (pinned in `rust-toolchain.toml`), C compiler (Xcode Command Line Tools on macOS), Git, Python 3.11+. Desktop build: Node 24, npm, and [Tauri OS prerequisites](https://v2.tauri.app/start/prerequisites/). Bun is needed only to develop the example / run Bun-specific local tests; the installed application manager builds/runs Bun inside its machines.
+Development: Rust 1.99.1 (pinned in `rust-toolchain.toml`), C compiler (Xcode Command Line Tools on macOS), Git, Python 3.11+. Desktop and tests: Bun 1.4 (package manager, builder tests), Node 24 (Playwright tests) and [Tauri OS prerequisites](https://v2.tauri.app/start/prerequisites/). The installed application manager builds and runs Bun inside its machines; host Bun is a development tool only.
 
 The engine is pinned to **smolvm 1.32.4**. This release uses its CLI directly: the Rust smolmachines SDK currently documents local Linux/macOS support, while the engine provides the Windows path too. Do not silently substitute another engine version. Engine bundles contain third-party libraries and a Linux guest: this is not third-party-free virtualization.
 
@@ -43,6 +43,8 @@ Default state/install directories:
 - Linux: `$XDG_DATA_HOME/defuss-container`, otherwise `~/.local/share/defuss-container`.
 - macOS: `~/Library/Application Support/defuss-container`.
 - Windows: `%LOCALAPPDATA%\defuss-container`.
+
+The daemon listens on `127.0.0.1:63705`; `--port` / `DEFUSS_CONTAINER_PORT` selects another port, and `0` lets the OS pick one. Clients read the address from `connection.json`, so they need no port setting.
 
 Add its `bin` directory to PATH. `--home` / `DEFUSS_CONTAINER_HOME` selects a different directory; use the same value for daemon, CLI and GUI. The GUI inherits the environment of the process launching it. The engine's VM disks remain in **smolvm's own per-user storage**, discoverable through `smolvm machine data-dir --name NAME`; moving the defuss directory alone does not move VM data.
 
@@ -69,7 +71,7 @@ The selected Git tree must contain:
 - A start script that stays in the foreground. Bind HTTP to `0.0.0.0`, not guest loopback, for published ports.
 - A stop script that completes promptly. The supervisor invokes it, then signals the entire start process group. The app must handle SIGTERM and close databases.
 
-Commands use `bun run --shell bun ...`. Distroless has no system shell, package manager, compiler, or arbitrary Unix tools. A script invoking `bash`, `curl`, `python`, `make`, etc. is outside this image contract. Native packages need compatible prebuilt Linux binaries. Dependency lifecycle scripts are disabled; an explicitly enabled package build script runs inside the builder VM. No emulated foreign architecture builds, Git submodules or Git LFS materialization in v0.1.
+`scripts.start`, `scripts.stop` and `scripts.build` run with `bun exec` (Bun Shell) and `node_modules/.bin` on `PATH`; pre/post lifecycle scripts are not run. Distroless has no system shell, package manager, compiler, or arbitrary Unix tools. A script invoking `bash`, `curl`, `python`, `make`, etc. is outside this image contract. Native packages need compatible prebuilt Linux binaries. Dependency lifecycle scripts are disabled; an explicitly enabled package build script runs inside the builder VM. No emulated foreign architecture builds, Git submodules or Git LFS materialization in v0.1.
 
 Reserved top-level application paths are `var`, `tmp`, `input`, `output`, `etc`; they are excluded from the code artifact and become links to `/app/<name>`. `.git`, `node_modules` from the source tree, `.npmrc`, and `.env*` other than `.env*.example` are excluded. Supply environment values in the app spec. Git credentials configured for the daemon user can authenticate HTTPS fetches; they are not forwarded into the builder. Private npm registry authentication is not implemented.
 
@@ -87,7 +89,7 @@ The `host` name resolves to `100.96.0.1`, the explicitly configured virtio-net g
 
 ## First application
 
-Commit `examples/hello` to an HTTPS Git repository, either at its root or in a subdirectory. It implements SQLite persistence, health, host reachability and output-share checks.
+Commit `examples/hello` to an HTTPS Git repository, either at its root or in a subdirectory. Its endpoints cover health (`/health`), SQLite persistence (`/counter`), host reachability (`/host`), the output share (`/output`), the input/etc shares, `tmp` reset and environment (`/shares`), and the deployed version (`/version`, read from an optional `version.txt`).
 
 Create `app.json` with your actual repository and absolute share directory:
 
@@ -121,6 +123,8 @@ defuss-container deploy hello RELEASE_ID
 defuss-container wait DEPLOY_JOB_ID
 defuss-container show hello
 defuss-container logs hello
+# Any API route through the same client the desktop bridge uses (JSON output):
+defuss-container api GET /v1/apps/hello/releases
 ```
 
 Every action returns immediately with a durable job record; use `wait`, `job`, `job-log`, or the GUI for completion. `wait` returns nonzero for failed/interrupted jobs. Job submission is not success. CPU/memory/mount/port specifications are immutable after registration in this first release; deploy new commits from the configured Git ref. For changes, back up, delete/re-register with the same app name, deploy, restore the backup. Delete requires `--confirm APP_NAME` and removes the VM disk. Host shares, release artifacts and backups remain.
@@ -139,37 +143,38 @@ Rollback switches code only. It does **not** undo database migrations. Failed re
 ## Desktop
 
 ```sh
-cd desktop
-npm ci --ignore-scripts
-npm run prepare:host   # build UI and generate host without compiling desktop
-npm run desktop        # native build on the current OS
+make gui         # native app for this OS: desktop/dist-tauri-build/release (binary and bundle)
+make start-gui   # open it against the `make start` daemon, starting that daemon if it is down
+make desktop     # build the UI and generate the host without compiling it
 ```
 
-Install/start the daemon separately first. The UI does not start it, own its lifetime, or invoke smolvm. Its Rust extension makes authenticated HTTP requests; daemon credentials never enter JavaScript. A browser-only Vite preview displays the UI but cannot control the daemon because the native bridge is absent.
+The UI does not start the daemon, own its lifetime, or invoke smolvm; `make start-gui` starts it first. While the daemon is unreachable, the UI retries after 1, 2, 4 ... up to 30 s, and the header shows a Reconnect button that retries at once. Its Rust extension makes authenticated HTTP requests; daemon credentials never enter JavaScript. A browser-only Vite preview displays the UI but cannot control the daemon because the native bridge is absent.
 
 ## Test / benchmark
 
-```sh
-cargo fmt --all -- --check
-cargo clippy --all-targets --locked -- -D warnings
-cargo test --locked
-node --test tests/archive.test.mjs
-# With Bun 1.4.4 installed (trusted example fixture only):
-node --test tests/build.test.mjs
-cargo build --locked
-python3 scripts/control-smoke.py
-cd desktop && npm ci --ignore-scripts && npm run prepare:host
-# From root, with native Tauri prerequisites:
-cargo check --manifest-path desktop/native/Cargo.toml --locked
-```
-
-Frontend interaction gate (uses a mock native bridge, not a VM):
+The `Makefile` is the interface for humans, agents and CI (`make` lists the verbs). Development daemon and clients, all on the state directory `var/home`:
 
 ```sh
-cd desktop
-npx playwright install chromium
-npm run test:ui
+make start                        # build, install into tmp/e2e/install and run the daemon detached (logs: make log)
+make cli                          # build the CLI (and daemon) only
+make start-cli ARGS="show hello"  # run the CLI against that daemon (default ARGS=list)
+make gui && make start-gui        # build and open the desktop app against it
+make stop
 ```
+
+Gates:
+
+```sh
+make setup      # rustup + pinned toolchain, locked Rust/bun dependencies, Playwright browsers, cargo-llvm-cov
+make lint       # rustfmt, Clippy and oxlint (warnings fail), desktop type check
+make test       # Rust, guest helper and builder tests, daemon/CLI smoke, UI interaction tests (no VM)
+make coverage   # Rust line coverage including the real daemon/CLI smoke run; gate floor 60%
+make e2e        # real VM: installed CLI/daemon/engine, full guest lifecycle, GUI in Chromium and WebKit
+make verify     # lint test coverage e2e, what CI runs
+make metrics    # peak RSS and disk use from the last e2e run
+```
+
+`make e2e` installs the release build and the checksummed engine into `tmp/e2e/install` and builds the UI. Then `tests/e2e/run.py` serves a fixture repository over local HTTPS and drives the installed CLI through build, deploy, guest wiring (shares, `host` alias, `tmp`), SQLite persistence, backup and restore, redeploy, rollback, a crashing release, daemon restart and delete. Every CLI command runs at least once. Finally `desktop/tests/e2e.test.mjs` clicks through the built UI in Playwright against the same live daemon. Results, logs, screenshots, peak RSS and disk use go to `output/e2e/`. It needs a hypervisor and network access to Docker Hub and the npm registry.
 
 Explicit network gate (pulls and verifies the real Bun image):
 
@@ -177,13 +182,12 @@ Explicit network gate (pulls and verifies the real Bun image):
 cargo test --test registry -- --ignored --nocapture
 ```
 
-Real hardware, running daemon and published example repository:
+Guest filesystem benchmark against a deployed app of the `make start` daemon:
 
 ```sh
-python3 scripts/vm-smoke.py --repository https://github.com/your-org/your-repo.git --subdirectory examples/hello
-python3 scripts/benchmark.py hello --engine /absolute/path/to/smolvm --output fs-results.json
+make bench APP=hello
 ```
 
-The smoke runner verifies host routing, output sharing, SQLite persistence, backup/restore, redeploy and rollback. The benchmark measures guest-local versus shared-output I/O, including full-sync SQLite commits. It explicitly labels reads as cached and does not claim physical-disk bandwidth. Run on all supported OS/architecture combinations before distribution.
+The benchmark measures guest-local versus shared-output I/O, including full-sync SQLite commits. It labels reads as cached and does not claim physical-disk bandwidth.
 
-See [API](docs/API.md), [architecture](docs/ARCHITECTURE.md), [security](docs/SECURITY.md), and [verification](docs/VERIFICATION.md).
+See [architecture](ARCH.md), [API](docs/API.md), [security](docs/SECURITY.md) and [verification](docs/VERIFICATION.md).
