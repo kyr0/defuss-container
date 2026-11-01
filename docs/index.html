@@ -1,0 +1,638 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>defuss-container · Bun apps in microVMs on your machine</title>
+  <meta name="description" content="defuss-container builds a Git commit of your Bun app inside a disposable microVM and runs each app in its own persistent Linux microVM on macOS, Linux or Windows, with health-gated deploys, rollback and backups. Local daemon, CLI and desktop app.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%237c8cff' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z'/%3E%3Cpath d='M12 22V12m0 0 8.7-5M12 12 3.3 7'/%3E%3C/svg%3E">
+  <script>
+    // Before paint, before the components load (defuss-shadcn Dark Mode guide): the saved choice, else the OS default.
+    let saved = '';
+    try {
+      const raw = JSON.parse(localStorage.getItem('defuss-shadcn-theme'));
+      saved = raw && raw.format === 'defuss-store' ? raw.value : raw;
+    } catch {}
+    if (saved === 'dark' || (!saved && matchMedia('(prefers-color-scheme: dark)').matches)) {
+      document.documentElement.classList.add('dark');
+      document.documentElement.style.colorScheme = 'dark';
+    }
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/kyr0/defuss-shadcn@0.9.11/dist/components/core.min.css" integrity="sha384-qUQCm/MM2DNkdT3uEdx8Mpocj+GwXlgLat0FnWv657c16tHWOouZFT2nV7kg5pBE" crossorigin="anonymous">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/kyr0/defuss-shadcn@0.9.11/dist/theme/utils/shapes.min.css" integrity="sha384-ZmqJOMYRZyhvc1zR5eOVub6RQoBcnL3oe8ubon6JcjkLJK/0Fy3THAhfLP8K3C71" crossorigin="anonymous">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/kyr0/defuss-shadcn@0.9.11/dist/components/all.min.css" integrity="sha384-D6ChEYfIRnfJpWB03vSS4b4b1ZdHsnCNUwg2VBFrBkjDVHIVvdVDXaJ1M2hFAdK2" crossorigin="anonymous">
+  <link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<svg class="sr-only" aria-hidden="true">
+  <symbol id="i-logo" viewBox="0 0 24 24"><path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/><path d="M12 22V12m0 0 8.7-5M12 12 3.3 7"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2m-7.07-17.07 1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></symbol>
+  <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-7-7 7 7-7 7"/></symbol>
+  <symbol id="i-arrow-down" viewBox="0 0 24 24"><path d="M12 5v14m7-7-7 7-7-7"/></symbol>
+  <symbol id="i-arrow-up" viewBox="0 0 24 24"><path d="m5 12 7-7 7 7M12 19V5"/></symbol>
+  <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12.83 2.18 8.58 3.9a1 1 0 0 1 0 1.83l-8.58 3.9a2 2 0 0 1-1.66 0L2.6 7.91a1 1 0 0 1 0-1.83l8.58-3.9a2 2 0 0 1 1.66 0Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65M22 12.65l-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/></symbol>
+  <symbol id="i-bot" viewBox="0 0 24 24"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2m16 0h2m-7-1v2m-6-2v2"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M10 12.5 8 15l2 2.5m4-5 2 2.5-2 2.5M14 2v4a2 2 0 0 0 2 2h4"/><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></symbol>
+  <symbol id="i-linkedin" viewBox="0 0 24 24"><path d="M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-4 0v7h-4v-7a6 6 0 0 1 6-6zM2 9h4v12H2z"/><circle cx="4" cy="4" r="2"/></symbol>
+  <symbol id="i-external" viewBox="0 0 24 24"><path d="M7 7h10v10M7 17 17 7"/></symbol>
+  <symbol id="i-github" viewBox="0 0 24 24"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.4 5.4 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"/><path d="M9 18c-4.51 2-5-2-7-2"/></symbol>
+  <symbol id="i-database" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></symbol>
+  <symbol id="i-undo" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></symbol>
+  <symbol id="i-terminal" viewBox="0 0 24 24"><path d="m4 17 6-6-6-6"/><path d="M12 19h8"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
+</svg>
+
+<div id="top" class="dc-page">
+  <header class="mk-header" data-variant="floating">
+    <div class="mk-header-inner">
+      <a href="#top" class="mk-header-brand"><svg class="dc-icon" aria-hidden="true"><use href="#i-logo"/></svg><span class="mk-header-name">defuss-container</span></a>
+      <nav class="mk-header-nav" aria-label="Main">
+        <ul class="nav-menu-list">
+          <li class="nav-menu-item"><a class="nav-menu-link" href="#app">App</a></li>
+          <li class="nav-menu-item"><a class="nav-menu-link" href="#why">Why</a></li>
+          <li class="nav-menu-item"><a class="nav-menu-link" href="#how">How it works</a></li>
+          <li class="nav-menu-item"><a class="nav-menu-link" href="#measured">Measured</a></li>
+          <li class="nav-menu-item"><a class="nav-menu-link" href="#use">Use it</a></li>
+          <li class="nav-menu-item"><a class="nav-menu-link" href="#api">API</a></li>
+        </ul>
+      </nav>
+      <div class="mk-header-actions">
+        <label class="swap" data-variant="rotate" data-size="sm">
+          <input type="checkbox" id="theme-toggle" aria-label="Dark mode">
+          <span class="swap-on"><svg class="dc-icon" aria-hidden="true"><use href="#i-moon"/></svg></span>
+          <span class="swap-off"><svg class="dc-icon" aria-hidden="true"><use href="#i-sun"/></svg></span>
+        </label>
+        <a class="btn mk-header-wide" data-variant="outline" data-size="sm" href="https://github.com/kyr0/defuss-container" target="_blank" rel="noopener"><svg class="dc-icon" aria-hidden="true"><use href="#i-github"/></svg>GitHub <span class="badge" data-variant="secondary" data-size="xs">v0.1.0</span><span class="sr-only"> (opens in a new tab)</span></a>
+        <button type="button" class="btn mk-header-menu" data-variant="ghost" data-size="icon" data-sheet-trigger="dc-menu" aria-haspopup="dialog" aria-label="Open menu"><svg class="dc-icon" aria-hidden="true"><use href="#i-menu"/></svg></button>
+      </div>
+    </div>
+    <dialog id="dc-menu" class="sheet" data-side="right" role="dialog" aria-modal="true" aria-labelledby="dc-menu-title">
+      <div class="sheet-content">
+        <div class="sheet-header">
+          <h2 class="sheet-title" id="dc-menu-title">defuss-container</h2>
+        </div>
+        <div class="sheet-body">
+          <p class="mk-header-sheet-label">This page</p>
+          <ul class="mk-header-sheet-nav">
+            <li><a href="#app" data-sheet-close>App <small>The desktop app</small></a></li>
+            <li><a href="#why" data-sheet-close>Why <small>Purpose and design decisions</small></a></li>
+            <li><a href="#how" data-sheet-close>How it works <small>From commit to running app</small></a></li>
+            <li><a href="#measured" data-sheet-close>Measured <small>Timings, memory and disk</small></a></li>
+            <li><a href="#use" data-sheet-close>Use it</a></li>
+            <li><a href="#api" data-sheet-close>API <small>HTTP routes and daemon control</small></a></li>
+          </ul>
+        </div>
+        <div class="sheet-footer mk-header-sheet-actions">
+          <a class="btn" data-variant="outline" href="https://github.com/kyr0/defuss-container"><svg class="dc-icon" aria-hidden="true"><use href="#i-github"/></svg>GitHub <span class="badge" data-variant="secondary" data-size="xs">v0.1.0</span></a>
+        </div>
+      </div>
+    </dialog>
+  </header>
+
+  <main class="dc-main">
+
+  <section class="parallax" aria-label="Introduction" style="padding-block:clamp(4rem, 10vw, 7rem) 1rem">
+    <div class="parallax-layer" data-depth="far" aria-hidden="true">
+      <div class="pattern-grid" style="width:100%;height:100%;--shape-ink:color-mix(in oklch, var(--foreground) 7%, transparent);--shape-pattern:32px;mask-image:radial-gradient(55% 60% at 50% 45%, #000, transparent 75%)"></div>
+    </div>
+    <div class="parallax-layer" data-depth="mid" aria-hidden="true" style="--parallax-speed:22%;mask-image:linear-gradient(#000 55%, transparent 92%)">
+      <div class="corner-blob" style="position:absolute;inset-block-start:10%;inset-inline-start:8%;width:min(22rem, 45%);aspect-ratio:1;background:color-mix(in oklch, var(--chart-4) 40%, transparent);filter:blur(60px);opacity:.55"></div>
+      <div class="corner-blob-3" style="position:absolute;inset-block-start:28%;inset-inline-end:6%;width:min(18rem, 40%);aspect-ratio:1;background:color-mix(in oklch, var(--chart-2) 40%, transparent);filter:blur(60px);opacity:.5"></div>
+    </div>
+    <div class="parallax-content">
+      <section class="mk-hero" style="width:100%">
+        <div class="mk-hero-copy">
+          <div class="mk-hero-pill dc-hero-pill"><a class="badge" data-variant="default" data-size="sm" href="https://github.com/kyr0/defuss-container" target="_blank" rel="noopener">v0.1.0<span class="sr-only"> (opens in a new tab)</span></a><a href="#measured">First source release, verified end to end on macOS <svg class="dc-icon" aria-hidden="true"><use href="#i-arrow"/></svg></a></div>
+          <h1 class="mk-hero-title">Run each <strong>Bun</strong> app in its <i>own</i> Linux microVM, on your machine</h1>
+          <p class="dc-flip"><span class="text-rotate"><span>
+              <span class="dc-accent">built from a Git commit</span>
+              <span class="dc-accent">with builds kept off the host</span>
+              <span class="dc-accent">behind a health check</span>
+              <span class="dc-accent">with data on the host disk</span>
+              <span class="dc-accent">with backups and restore</span>
+              <span class="dc-accent">with a CLI and a desktop app</span>
+          </span></span></p>
+          <p class="mk-hero-desc">defuss-container builds an HTTPS Git repository into a Bun distroless image inside a <strong>disposable builder VM</strong> and runs each application in a <strong>persistent smolvm microVM</strong>. A user-level daemon keeps applications, releases and jobs in SQLite; the CLI and the desktop app are clients of its loopback API.</p>
+          <div class="mk-hero-actions">
+            <a class="btn" data-size="lg" href="#use">Get started<svg class="dc-icon" aria-hidden="true"><use href="#i-arrow-down"/></svg></a>
+            <a class="btn" data-variant="outline" data-size="lg" href="#how">How it works</a>
+          </div>
+          <p class="mk-hero-note">Built by <a href="https://www.linkedin.com/in/aronhomberg/" target="_blank" rel="noopener">Aron Homberg (kyr0)<svg class="dc-icon dc-ext" aria-hidden="true"><use href="#i-external"/></svg><span class="sr-only"> (opens in a new tab)</span></a> · Open Source (<a href="https://github.com/kyr0/defuss-container/blob/main/LICENSE" target="_blank" rel="noopener">MIT<svg class="dc-icon dc-ext" aria-hidden="true"><use href="#i-external"/></svg><span class="sr-only"> (opens in a new tab)</span></a>)</p>
+        </div>
+      </section>
+      <div class="dc-intro" id="intro">
+        <section class="dc-intro-item" aria-labelledby="intro-1">
+          <span class="dc-intro-icon" aria-hidden="true"><svg class="dc-icon"><use href="#i-shield"/></svg></span>
+          <h3 id="intro-1">Repository code runs only in VMs</h3>
+          <p>On the host, Git only fetches and archives. Dependency installs and <code>scripts.build</code> run in a builder VM that <strong>cannot reach private networks</strong>, and the host checks every path, link, type and size of its output before packaging it.</p>
+        </section>
+        <section class="dc-intro-item" aria-labelledby="intro-2">
+          <span class="dc-intro-icon" aria-hidden="true"><svg class="dc-icon"><use href="#i-layers"/></svg></span>
+          <h3 id="intro-2">One persistent VM per app</h3>
+          <p>Each application owns a named machine with the CPUs, memory and disk its spec sets, on <strong>KVM</strong> (Linux), <strong>Hypervisor.framework</strong> (macOS) or <strong>Windows Hypervisor Platform</strong>. A deploy switches the code release; the VM and its data stay.</p>
+        </section>
+        <section class="dc-intro-item" aria-labelledby="intro-3">
+          <span class="dc-intro-icon" aria-hidden="true"><svg class="dc-icon"><use href="#i-undo"/></svg></span>
+          <h3 id="intro-3">Deploys you can undo</h3>
+          <p>A deploy waits for the app's health endpoint. A release that fails readiness is <strong>replaced by the previous one</strong>, which restarts if it was running, and <code>rollback</code> switches back on request. Rollback changes code, not database schemas.</p>
+        </section>
+        <section class="dc-intro-item" aria-labelledby="intro-4">
+          <span class="dc-intro-icon" aria-hidden="true"><svg class="dc-icon"><use href="#i-database"/></svg></span>
+          <h3 id="intro-4">Data that outlives releases</h3>
+          <p><code>./var</code> lives on the VM's own ext4 disk with <strong>full flush durability</strong>. Backups archive it while the workload is stopped; restore verifies the checksum and takes a safety backup first.</p>
+        </section>
+        <section class="dc-intro-item" aria-labelledby="intro-5">
+          <span class="dc-intro-icon" aria-hidden="true"><svg class="dc-icon"><use href="#i-terminal"/></svg></span>
+          <h3 id="intro-5">One daemon, two clients</h3>
+          <p>The <strong>CLI</strong> and the <strong>desktop app</strong> call the same HTTP API. Every action returns a durable job at once; jobs outlive both clients, and a daemon restart marks unfinished jobs interrupted and brings each app back to its desired state.</p>
+        </section>
+        <section class="dc-intro-item" aria-labelledby="intro-6">
+          <span class="dc-intro-icon" aria-hidden="true"><svg class="dc-icon"><use href="#i-lock"/></svg></span>
+          <h3 id="intro-6">Local by design</h3>
+          <p>The API listens on <code>127.0.0.1:63705</code> only, rejects browser origins and rotates its <strong>256-bit token</strong> on every start; the token never reaches JavaScript or a guest. defuss-container itself contacts only your Git remote, Docker Hub and, from the builder VM, the npm registry.</p>
+        </section>
+      </div>
+    </div>
+  </section>
+
+  <div class="dc-flythrough">
+    <section class="parallax" data-sticky style="--parallax-length:2" aria-label="Fetch, build, run">
+      <div class="parallax-stage" style="background:radial-gradient(circle at 50% 50%, color-mix(in oklch, var(--chart-4) 50%, #05060f), #05060f 72%);color:#fff;border-radius:var(--radius-xl)">
+        <div class="parallax-layer" data-motion="zoom fade" style="--parallax-scale:6"><svg viewBox="0 0 400 400" preserveAspectRatio="xMidYMid meet" aria-hidden="true"><rect x="140" y="140" width="120" height="120" rx="14" fill="none" stroke="#7cf0ff" stroke-width="1.5" opacity=".7"/><rect x="95" y="95" width="210" height="210" rx="22" fill="none" stroke="#b07cff" stroke-width="1" opacity=".5"/><rect x="40" y="40" width="320" height="320" rx="30" fill="none" stroke="#7c8cff" stroke-width=".8" opacity=".35"/></svg></div>
+        <div class="parallax-layer" data-motion="pass" style="animation-range:contain 0% contain 40%;z-index:1"><p class="dc-fly-word">Fetch.</p></div>
+        <div class="parallax-layer" data-motion="pass" style="animation-range:contain 30% contain 70%;z-index:2"><p class="dc-fly-word">Build.</p></div>
+        <div class="parallax-layer" data-motion="pass" style="animation-range:contain 60% contain 100%;z-index:3"><p class="dc-fly-word">Run.</p></div>
+        <div class="parallax-layer" data-motion="spin" style="--parallax-turn:90deg;--parallax-speed:0%;z-index:-1;opacity:.25"><svg viewBox="0 0 400 400" preserveAspectRatio="xMidYMid slice" aria-hidden="true"><g fill="none" stroke="#fff" stroke-width=".6"><path d="M-60 80h520M-60 140h520M-60 200h520M-60 260h520M-60 320h520"/><path d="M80-60v520M200-60v520M320-60v520"/></g></svg></div>
+      </div>
+    </section>
+  </div>
+
+  <section id="app" class="container dc-section parallax-reveal" data-reveal="zoom" aria-labelledby="app-title">
+    <header class="mk-section-header" data-align="center">
+      <div class="mk-section-header-copy">
+        <span class="mk-section-header-eyebrow">Desktop app</span>
+        <h2 class="mk-section-header-title" id="app-title">Every app, release and job at a glance</h2>
+        <p class="mk-section-header-desc">The desktop app shows each application with its desired state, release and storage, runs every action from build to delete, and keeps the recent jobs in view. Closing it leaves the daemon and the machines running.</p>
+      </div>
+    </header>
+    <figure class="dc-shot">
+      <div class="frame-window dc-shot-frame"><img src="assets/app-dashboard.png" width="1365" height="590" alt="The defuss container desktop app: the Applications dashboard with one running app named hello, its release, storage and the actions Build release, Stop, Rollback and Back up data" loading="lazy"></div>
+      <figcaption class="dc-shot-caption">The dashboard with the example app deployed, captured by the end-to-end suite in Chromium against a live daemon.</figcaption>
+    </figure>
+  </section>
+
+  <section id="why" class="container dc-section parallax-reveal" aria-labelledby="why-title">
+    <section class="mk-features" style="width:100%">
+      <div class="mk-features-head">
+        <span class="mk-features-eyebrow">Why</span>
+        <h2 class="mk-features-title" id="why-title">Your own services, each behind a hypervisor</h2>
+        <p class="mk-features-desc">defuss-container is a single-user tool for the Bun services you run on your own computer. One daemon owns all state and is the only process that runs Git or the VM engine; the CLI and the desktop app only talk to it.</p>
+      </div>
+      <figure class="diagram dc-arch" id="architecture" data-type="architecture" aria-label="Architecture: the CLI and the desktop app call the daemon, which keeps state in SQLite, fetches from Git and Docker Hub, and drives the engine that runs the builder VM and one VM per app">
+        <figcaption class="diagram-caption">
+          <span class="diagram-eyebrow">Architecture</span>
+          <span class="diagram-title">One daemon, two clients, one VM per app</span>
+          <span class="diagram-dek">Clients reach the daemon over its loopback API with a bearer token; the daemon passes the engine arguments only, never a shell command.</span>
+        </figcaption>
+        <div class="diagram-canvas" style="--cols: 4">
+          <div class="diagram-group" data-node="host" style="--col: 1; --row: 1; --span: 3; --rspan: 3"><span class="diagram-group-label">Host · your user account</span></div>
+          <div class="diagram-group" data-node="hv" style="--col: 4; --row: 1; --rspan: 2"><span class="diagram-group-label">Hypervisor</span></div>
+          <div class="diagram-node" data-node="cli" style="--col: 1; --row: 1">
+            <span class="diagram-node-eyebrow">Client</span>
+            <span class="diagram-node-name">CLI</span>
+            <span class="diagram-node-meta">defuss-container</span>
+          </div>
+          <div class="diagram-node" data-node="gui" style="--col: 1; --row: 3">
+            <span class="diagram-node-eyebrow">Client</span>
+            <span class="diagram-node-name">Desktop app</span>
+            <span class="diagram-node-meta">defuss UI · Rust bridge</span>
+          </div>
+          <div class="diagram-node" data-node="daemon" data-tone="accent" style="--col: 2; --row: 1; --rspan: 3">
+            <span class="diagram-node-eyebrow">127.0.0.1:63705</span>
+            <span class="diagram-node-name">defuss-containerd</span>
+            <span class="diagram-node-meta">jobs · releases · backups</span>
+          </div>
+          <div class="diagram-node" data-node="db" data-shape="store" style="--col: 3; --row: 1">
+            <span class="diagram-node-name">SQLite</span>
+            <span class="diagram-node-meta">apps · releases · jobs</span>
+          </div>
+          <div class="diagram-node" data-node="engine" style="--col: 3; --row: 2">
+            <span class="diagram-node-eyebrow">Pinned engine</span>
+            <span class="diagram-node-name">smolvm 1.32.4</span>
+            <span class="diagram-node-meta">KVM · HVF · WHP</span>
+          </div>
+          <div class="diagram-node" data-node="up" data-tone="external" style="--col: 3; --row: 3">
+            <span class="diagram-node-name">Git remote · Docker Hub</span>
+            <span class="diagram-node-meta">HTTPS fetch · verified digests</span>
+          </div>
+          <div class="diagram-node" data-node="builder" style="--col: 4; --row: 1">
+            <span class="diagram-node-eyebrow">Disposable</span>
+            <span class="diagram-node-name">Builder VM</span>
+            <span class="diagram-node-meta">install · scripts.build</span>
+          </div>
+          <div class="diagram-node" data-node="app" data-tone="accent" style="--col: 4; --row: 2">
+            <span class="diagram-node-eyebrow">One per app</span>
+            <span class="diagram-node-name">App VM</span>
+            <span class="diagram-node-meta">supervisor · bun exec start</span>
+          </div>
+        </div>
+        <ol class="diagram-edges">
+          <li class="diagram-edge" data-from="cli" data-to="daemon">HTTP + token</li>
+          <li class="diagram-edge" data-from="gui" data-to="daemon">HTTP + token</li>
+          <li class="diagram-edge" data-from="daemon" data-to="db">WAL</li>
+          <li class="diagram-edge" data-from="daemon" data-to="engine" data-tone="accent">argv</li>
+          <li class="diagram-edge" data-from="daemon" data-to="up" data-tone="link">HTTPS</li>
+          <li class="diagram-edge" data-from="engine" data-to="builder">boot</li>
+          <li class="diagram-edge" data-from="engine" data-to="app">boot</li>
+        </ol>
+        <ul class="diagram-legend">
+          <li data-swatch="accent">Daemon and app VMs</li>
+          <li data-swatch="external">Upstream services</li>
+        </ul>
+      </figure>
+      <div class="mk-feature-cards">
+        <div class="mk-feature-card">
+          <h3 class="mk-feature-card-title"><svg class="dc-icon dc-card-icon" aria-hidden="true"><use href="#i-layers"/></svg>A microVM per app</h3>
+          <p class="mk-feature-card-desc">Each app runs under its own Linux kernel, so the boundary between apps and host is the hypervisor, and the host needs no Docker or Podman. It is no sandbox for hostile code: apps have outbound network access and reach host services through <code>host</code>.</p>
+        </div>
+        <div class="mk-feature-card">
+          <h3 class="mk-feature-card-title"><svg class="dc-icon dc-card-icon" aria-hidden="true"><use href="#i-terminal"/></svg>One daemon, thin clients</h3>
+          <p class="mk-feature-card-desc">Builds, deploys and backups run as jobs that outlive the window that started them. One API serves the CLI, the desktop app and the end-to-end suite alike; a library in each client would need its own locking and lifetime rules.</p>
+        </div>
+        <div class="mk-feature-card">
+          <h3 class="mk-feature-card-title"><svg class="dc-icon dc-card-icon" aria-hidden="true"><use href="#i-shield"/></svg>The engine CLI, not the SDK</h3>
+          <p class="mk-feature-card-desc">The smolmachines SDK documents Linux and macOS only; the smolvm 1.32.4 CLI also covers Windows. Every flag the adapter passes was checked against the pinned macOS binary's help output.</p>
+        </div>
+        <div class="mk-feature-card">
+          <h3 class="mk-feature-card-title"><svg class="dc-icon dc-card-icon" aria-hidden="true"><use href="#i-undo"/></svg>Releases switch, machines stay</h3>
+          <p class="mk-feature-card-desc">A deploy selects a release through a host-private launch file and a read-only share, then restarts the machine. <code>./var</code> stays on its disk, so deploys and rollbacks keep the data; there is no zero-downtime deploy.</p>
+        </div>
+      </div>
+    </section>
+  </section>
+
+  <section id="how" class="container dc-section parallax-reveal" aria-labelledby="how-title">
+    <section class="mk-features" style="width:100%">
+      <div class="mk-features-head">
+        <span class="mk-features-eyebrow">How it works</span>
+        <h2 class="mk-features-title" id="how-title">From a Git commit to a running app</h2>
+        <p class="mk-features-desc">The daemon fetches one commit, verifies the base image by digest and builds in a disposable VM. It checks and packages the result as an immutable release. A deploy starts that release in the app's own machine and waits for its health check.</p>
+      </div>
+      <figure class="diagram dc-pipeline" id="pipeline" data-type="data-flow" data-steps data-autoplay="400" aria-label="How a commit becomes a release and a running app">
+        <div class="diagram-canvas" style="grid-template-columns:6.5rem repeat(4,minmax(9rem,1fr));--diagram-node-w:11rem">
+          <div class="diagram-group" data-shape="lane" data-step="0" style="--col:1;--row:2;--span:5"><span class="diagram-group-label">Host · daemon</span></div>
+          <div class="diagram-group" data-shape="lane" data-step="0" style="--col:1;--row:3;--span:5"><span class="diagram-group-label">Guest · microVMs</span></div>
+          <div class="diagram-cell" data-role="head" data-step="0" style="--col:2;--row:1">01 · Fetch</div>
+          <div class="diagram-cell" data-role="head" data-step="0" style="--col:3;--row:1">02 · Build</div>
+          <div class="diagram-cell" data-role="head" data-step="0" style="--col:4;--row:1">03 · Package</div>
+          <div class="diagram-cell" data-role="head" data-step="0" style="--col:5;--row:1">04 · Run</div>
+          <div class="diagram-node" data-node="git" data-step="1" data-step-label="Fetch: one commit over HTTPS" style="--col:2;--row:2">
+            <span class="diagram-node-eyebrow">HTTPS Git</span>
+            <span class="diagram-node-name">Pin one commit</span>
+            <span class="diagram-node-meta">archive the tree · no hooks</span>
+          </div>
+          <div class="diagram-node" data-node="base" data-step="2" data-step-label="Build: verify the base image" style="--col:3;--row:2">
+            <span class="diagram-node-eyebrow">Bun 1.4.4 distroless</span>
+            <span class="diagram-node-name">Verify base image</span>
+            <span class="diagram-node-meta">manifest · config · layers</span>
+          </div>
+          <div class="diagram-node" data-node="builder" data-tone="accent" data-step="3" data-step-label="Build: install and build in a disposable VM" style="--col:3;--row:3">
+            <span class="diagram-node-eyebrow">Disposable · private nets blocked</span>
+            <span class="diagram-node-name">Builder VM</span>
+            <span class="diagram-node-meta">frozen install · scripts.build</span>
+          </div>
+          <div class="diagram-node" data-node="package" data-step="4" data-step-label="Package: check every entry" style="--col:4;--row:2">
+            <span class="diagram-node-eyebrow">Host checks</span>
+            <span class="diagram-node-name">Check and package</span>
+            <span class="diagram-node-meta">paths · links · types · sizes</span>
+          </div>
+          <div class="diagram-node" data-node="release" data-shape="store" data-step="5" data-step-label="Package: an immutable release" style="--col:5;--row:2">
+            <span class="diagram-node-name">Release</span>
+            <span class="diagram-node-meta">OCI image · checksum · SQLite</span>
+          </div>
+          <div class="diagram-node" data-node="app" data-shape="pill" data-step="6" data-step-label="Run: the app's own machine" style="--col:5;--row:3">
+            <span class="diagram-node-name">App VM</span>
+            <span class="diagram-node-meta">supervisor · health check</span>
+          </div>
+        </div>
+        <ol class="diagram-edges">
+          <li class="diagram-edge" data-from="git" data-to="builder">source</li>
+          <li class="diagram-edge" data-from="base" data-to="builder">image</li>
+          <li class="diagram-edge" data-from="builder" data-to="package" data-tone="accent">tar layer</li>
+          <li class="diagram-edge" data-from="package" data-to="release">OCI</li>
+          <li class="diagram-edge" data-from="release" data-to="app" data-flow="2400" data-flow-delay="0">deploy</li>
+        </ol>
+      </figure>
+      <div class="dc-runtime">
+        <div class="dc-runtime-col">
+          <h3 class="dc-way-title">Inside the app VM</h3>
+          <p class="dc-way-desc">The image holds the Bun base, the first release and a runtime layer with the supervisor. On every start the supervisor runs three steps:</p>
+          <ol class="mk-process-steps">
+            <li class="mk-process-step">
+              <span class="mk-process-step-number" aria-hidden="true">01</span>
+              <div class="mk-process-step-body">
+                <h4 class="mk-process-step-title">Verify</h4>
+                <p class="mk-process-step-desc">Checks the release layer's checksum, extracts it into an empty staging tree and moves it into place.</p>
+              </div>
+            </li>
+            <li class="mk-process-step">
+              <span class="mk-process-step-number" aria-hidden="true">02</span>
+              <div class="mk-process-step-body">
+                <h4 class="mk-process-step-title">Link</h4>
+                <p class="mk-process-step-desc">Links <code>./var</code>, <code>./tmp</code>, <code>./input</code>, <code>./output</code> and <code>./etc</code> into the release, empties <code>./tmp</code> and maps <code>host</code> to the gateway <code>100.96.0.1</code>.</p>
+              </div>
+            </li>
+            <li class="mk-process-step">
+              <span class="mk-process-step-number" aria-hidden="true">03</span>
+              <div class="mk-process-step-body">
+                <h4 class="mk-process-step-title">Start</h4>
+                <p class="mk-process-step-desc">Runs <code>scripts.start</code> with <code>bun exec</code> in its own process group. Stop runs <code>scripts.stop</code>, then SIGTERM, then SIGKILL after half the stop timeout.</p>
+              </div>
+            </li>
+          </ol>
+          <p class="dc-way-desc">A workload that exits powers the machine off, so a crashing release fails readiness at once instead of after the 60&nbsp;s timeout.</p>
+        </div>
+        <div class="dc-runtime-col">
+          <h3 class="dc-way-title">Where an app's files live</h3>
+          <div class="card dc-table-card">
+            <div class="card-content">
+              <table class="table dc-table" data-size="sm">
+                <thead><tr><th scope="col">Path</th><th scope="col">Backing</th><th scope="col">Lifecycle</th></tr></thead>
+                <tbody>
+                  <tr><td><code>./var</code></td><td>VM's ext4 disk</td><td>Kept across stop, start, deploy, rollback; backed up</td></tr>
+                  <tr><td><code>./tmp</code></td><td>Inside the VM</td><td>Emptied before every start</td></tr>
+                  <tr><td><code>./input</code></td><td>Host share, read-only</td><td>Written by you on the host</td></tr>
+                  <tr><td><code>./output</code></td><td>Host share, writable</td><td>Visible on the host</td></tr>
+                  <tr><td><code>./etc</code></td><td>Host share, read-only</td><td>Configuration you provide</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </section>
+
+  <div class="container dc-section parallax-reveal">
+    <section class="mk-stats" style="width:100%" aria-label="Footprint at a glance">
+      <div class="mk-stats-band">
+        <div class="mk-stat"><span class="mk-stat-value">1.9&nbsp;s</span><span class="mk-stat-label">"hello" from scratch: VM created, booted, healthy</span></div>
+        <div class="mk-stat"><span class="mk-stat-value">0.4&ndash;0.6&nbsp;s</span><span class="mk-stat-label">"hello" restart from stopped until healthy</span></div>
+        <div class="mk-stat"><span class="mk-stat-value">25&nbsp;MiB</span><span class="mk-stat-label">daemon peak memory</span></div>
+        <div class="mk-stat"><span class="mk-stat-value">11&nbsp;MiB</span><span class="mk-stat-label">installed binaries</span></div>
+      </div>
+    </section>
+  </div>
+
+  <section id="measured" class="container dc-section parallax-reveal" aria-labelledby="measured-title">
+    <header class="mk-section-header" data-align="center">
+      <div class="mk-section-header-copy">
+        <span class="mk-section-header-eyebrow">Measured</span>
+        <h2 class="mk-section-header-title" id="measured-title">Measured, not promised</h2>
+        <p class="mk-section-header-desc">Measured by <code>make e2e</code> on macOS 26.7.1 with an Apple M5 Max and Hypervisor.framework, with the example app at 2 vCPUs, 1024&nbsp;MiB and 20&nbsp;GiB. Job durations come from the daemon's log of one run, memory and disk from the run in <a href="https://github.com/kyr0/defuss-container/blob/main/docs/VERIFICATION.md#resource-footprint" target="_blank" rel="noopener">VERIFICATION.md</a>. Linux and Windows are not measured yet, and neither is guest I/O (<code>make bench</code>).</p>
+      </div>
+    </header>
+    <section class="mk-stats dc-stats" style="width:100%">
+      <div class="mk-stats-grid" data-variant="cards">
+        <div class="mk-stat"><span class="mk-stat-value">9.5&nbsp;s</span><span class="mk-stat-label">first build in a builder VM, empty daemon cache</span></div>
+        <div class="mk-stat"><span class="mk-stat-value">0.7&nbsp;s</span><span class="mk-stat-label">deploy a new release until healthy</span></div>
+        <div class="mk-stat"><span class="mk-stat-value">0.7&nbsp;s</span><span class="mk-stat-label">roll back to the previous release</span></div>
+        <div class="mk-stat"><span class="mk-stat-value">1.2&nbsp;s</span><span class="mk-stat-label">restore a backup, safety backup included</span></div>
+      </div>
+    </section>
+    <div class="dc-charts">
+      <figure class="chart-frame card dc-chart">
+        <h3 class="chart-title">Job durations</h3>
+        <p class="chart-dek">Each "hello" job of one end-to-end run, from start to end as the daemon logged it. Build v1 downloads the base image and the example's dependencies into an empty daemon cache; deploy v1 creates the VM from the release image.</p>
+        <div class="chart" data-size="lg" role="img" aria-label="Bar chart of job durations in seconds: build v1 9.53, deploy v1 from scratch 1.88, backup 1.19, stop 0.33, start from stopped 0.59, restore 1.24, build v2 3.67, deploy v2 0.72, rollback 0.70, crashing release refused 1.25, delete 0.43" data-chart='{"grid":{"left":4,"right":52,"top":8,"bottom":8,"containLabel":true},"xAxis":{"type":"value","splitNumber":4,"axisLabel":{"show":false}},"yAxis":{"type":"category","inverse":true,"axisLabel":{"fontSize":11,"width":100,"overflow":"break","lineHeight":14},"data":["Build v1, empty cache","Deploy v1 from scratch","Backup","Stop","Start from stopped","Restore","Build v2","Deploy v2","Roll back to v1","Crashing release refused","Delete"]},"series":[{"type":"bar","barWidth":"56%","label":{"show":true,"position":"right","fontSize":11,"formatter":"{c} s"},"data":[9.53,1.88,1.19,0.33,0.59,1.24,3.67,0.72,0.7,1.25,0.43]}]}'></div>
+        <figcaption class="chart-source">Source: daemon job log of one <code>make e2e</code> run</figcaption>
+      </figure>
+      <figure class="chart-frame card dc-chart">
+        <h3 class="chart-title">Peak memory per process</h3>
+        <p class="chart-dek">Resident set size: from the kernel for the daemon and the CLI, from <code>ps</code> samples every second for VM processes and every 0.5&nbsp;s for the desktop app, alone and with its 3 WebKit helpers. The app VM's guest used 86 of its 986&nbsp;MiB; the image import helper is the engine's short-lived VM for a new release image.</p>
+        <div class="chart" data-size="lg" role="img" aria-label="Bar chart of peak resident memory in MiB: daemon 25, CLI 15, desktop app 95, desktop app with WebKit helpers 189, builder VM 286, app VM 334, image import helper 656 to 707" data-chart='{"grid":{"left":4,"right":84,"top":8,"bottom":8,"containLabel":true},"xAxis":{"type":"value","splitNumber":4,"axisLabel":{"show":false}},"yAxis":{"type":"category","inverse":true,"axisLabel":{"fontSize":11,"width":100,"overflow":"break","lineHeight":14},"data":["Daemon","CLI, largest call","Desktop app","Desktop app + WebKit","Builder VM","App VM","Image import helper"]},"series":[{"type":"bar","barWidth":"56%","label":{"show":true,"position":"right","fontSize":11,"formatter":"{c} MiB"},"data":[25,15,95,189,286,334,{"value":707,"label":{"formatter":"656 to 707 MiB"}}]}]}'></div>
+        <figcaption class="chart-source">Source: <code>make e2e</code> resource sampler; desktop app sampled by hand</figcaption>
+      </figure>
+    </div>
+    <div class="dc-footprint">
+      <figure class="card dc-bench">
+        <figcaption class="card-header"><h3 class="card-title">Disk use</h3><p class="card-description">Allocated bytes; VM disks and engine templates are sparse files.</p></figcaption>
+        <div class="card-content">
+          <table class="table dc-table" data-size="sm">
+            <thead><tr><th scope="col">Item</th><th scope="col" class="dc-num">Allocated</th></tr></thead>
+            <tbody>
+              <tr><td>Installed binaries</td><td class="dc-num">11&nbsp;MiB</td></tr>
+              <tr><td>Desktop app bundle</td><td class="dc-num">6.1&nbsp;MiB</td></tr>
+              <tr><td>Engine bundle (30&nbsp;GiB apparent)</td><td class="dc-num">133&nbsp;MiB</td></tr>
+              <tr><td>Verified base-image blobs</td><td class="dc-num">58&nbsp;MiB</td></tr>
+              <tr><td>Each release: app layer 4.5&nbsp;MiB, OCI image 62&nbsp;MiB</td><td class="dc-num">66&nbsp;MiB</td></tr>
+              <tr><td>App VM disk after the run</td><td class="dc-num">169&nbsp;MiB</td></tr>
+              <tr><td>Engine image seed per new machine image</td><td class="dc-num">about 150&nbsp;MiB</td></tr>
+              <tr><td>Backup of the example's <code>./var</code></td><td class="dc-num">under 0.1&nbsp;MiB</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </figure>
+      <figure class="card dc-bench">
+        <figcaption class="card-header"><h3 class="card-title">Planning a host</h3><p class="card-description">Estimates from these runs, not measured limits.</p></figcaption>
+        <div class="card-content">
+          <ul class="dc-plan">
+            <li><strong>Memory:</strong> budget each app's configured memory plus about 0.25&nbsp;GiB, and about 0.7&nbsp;GiB more for a moment while a new release image is imported.</li>
+            <li><strong>Disk:</strong> one app with three releases came to about 0.7&nbsp;GiB. A machine that never built before also needs the Bun base image seed, 136&nbsp;MiB here, so plan about 0.85&nbsp;GiB.</li>
+            <li><strong>Retention:</strong> releases, backups and engine image seeds have no retention policy yet.</li>
+          </ul>
+        </div>
+      </figure>
+    </div>
+  </section>
+
+  <div class="container dc-section parallax-reveal" id="consulting">
+    <div class="corner-leaf-reverse pattern-mesh dc-consult">
+    <section class="mk-cta" data-variant="split" aria-labelledby="consult-title">
+      <div class="mk-cta-inner">
+        <div class="mk-cta-copy">
+          <div class="dc-cta-head">
+            <div class="aura aura-glow aura-gold dc-cta-portrait" style="--shape-round:1.25rem"><img class="shape-squircle" src="assets/aron-homberg.jpg" width="400" height="400" alt="Portrait of Aron Homberg" loading="lazy"></div>
+            <h2 class="mk-cta-title" id="consult-title">Want help with your setup?</h2>
+          </div>
+          <p class="mk-cta-desc">Aron Homberg, freelance and independent AI researcher, offers consulting services worldwide.</p>
+        </div>
+        <div class="mk-cta-actions">
+          <a class="btn" data-size="lg" href="https://www.linkedin.com/in/aronhomberg/" target="_blank" rel="noopener"><svg class="dc-icon dc-icon-fill" aria-hidden="true"><use href="#i-linkedin"/></svg>Talk to Aron on LinkedIn<svg class="dc-icon dc-ext" aria-hidden="true"><use href="#i-external"/></svg><span class="sr-only"> (opens in a new tab)</span></a>
+        </div>
+      </div>
+    </section>
+    </div>
+  </div>
+
+  <section id="use" class="container dc-section parallax-reveal" aria-labelledby="use-title">
+    <div class="corner-leaf pattern-dots dc-use">
+    <header class="mk-section-header">
+      <div class="mk-section-header-copy">
+        <span class="mk-section-header-eyebrow">Use it</span>
+        <h2 class="mk-section-header-title" id="use-title">Run your first app</h2>
+        <p class="mk-section-header-desc">Start the daemon from a checkout and deploy an app with the CLI or the desktop app, or let your coding agent prepare an app for it.</p>
+      </div>
+    </header>
+    <div class="dc-ways">
+      <div class="dc-way">
+        <h3 class="dc-way-title"><svg class="dc-icon" aria-hidden="true"><use href="#i-terminal"/></svg>From a checkout</h3>
+        <p class="dc-way-desc">Needs Rust through rustup, a C compiler, Git, Python 3.11 and a hypervisor your user may use. <code>make start</code> builds the binaries, installs the checksummed engine and runs the daemon in the background; <code>make gui</code> also needs Bun 1.4 and the Tauri prerequisites.</p>
+        <figure class="mk-code-block dc-code">
+          <div class="mk-code-block-head"><div class="mk-code-block-tabs" role="radiogroup" aria-label="Example"><label><input type="radio" name="dc-use" value="start" checked>start</label><label><input type="radio" name="dc-use" value="app.json">app.json</label><label><input type="radio" name="dc-use" value="deploy">deploy</label></div><button class="mk-code-block-copy" type="button" aria-label="Copy code"><svg class="dc-icon" aria-hidden="true"><use href="#i-copy"/></svg></button></div>
+          <pre data-tab="start" data-numbers><code><span><span class="mk-code-block-k">git</span> clone <span class="mk-code-block-s">https://github.com/kyr0/defuss-container</span></span><span><span class="mk-code-block-k">cd</span> defuss-container</span><span><span class="mk-code-block-k">make</span> start                    <span class="mk-code-block-c"># daemon on 127.0.0.1:63705</span></span><span><span class="mk-code-block-k">make</span> start-cli ARGS=<span class="mk-code-block-s">"doctor"</span>  <span class="mk-code-block-c"># engine and hypervisor ready?</span></span><span><span class="mk-code-block-k">make</span> gui &amp;&amp; <span class="mk-code-block-k">make</span> start-gui    <span class="mk-code-block-c"># the desktop app</span></span></code></pre>
+          <pre data-tab="app.json" data-numbers><code><span>{</span><span>  <span class="mk-code-block-k">"name"</span>: <span class="mk-code-block-s">"hello"</span>,</span><span>  <span class="mk-code-block-k">"repository"</span>: <span class="mk-code-block-s">"https://github.com/your-org/your-bun-app.git"</span>,</span><span>  <span class="mk-code-block-k">"git_ref"</span>: <span class="mk-code-block-s">"main"</span>,</span><span>  <span class="mk-code-block-k">"mounts"</span>: <span class="mk-code-block-s">"/absolute/path/to/hello-shares"</span>,</span><span>  <span class="mk-code-block-k">"ports"</span>: [{<span class="mk-code-block-k">"host"</span>: <span class="mk-code-block-n">8080</span>, <span class="mk-code-block-k">"guest"</span>: <span class="mk-code-block-n">3000</span>}],</span><span>  <span class="mk-code-block-k">"env"</span>: {<span class="mk-code-block-k">"PORT"</span>: <span class="mk-code-block-s">"3000"</span>},</span><span>  <span class="mk-code-block-k">"health"</span>: {<span class="mk-code-block-k">"port"</span>: <span class="mk-code-block-n">3000</span>, <span class="mk-code-block-k">"path"</span>: <span class="mk-code-block-s">"/health"</span>}</span><span>}</span></code></pre>
+          <pre data-tab="deploy" data-numbers><code><span><span class="mk-code-block-k">defuss-container</span> create app.json</span><span><span class="mk-code-block-k">defuss-container</span> build hello              <span class="mk-code-block-c"># prints a job with its id</span></span><span><span class="mk-code-block-k">defuss-container</span> wait JOB_ID              <span class="mk-code-block-c"># result holds the release id</span></span><span><span class="mk-code-block-k">defuss-container</span> deploy hello RELEASE_ID</span><span><span class="mk-code-block-k">defuss-container</span> wait DEPLOY_JOB_ID</span><span><span class="mk-code-block-k">curl</span> <span class="mk-code-block-s">http://127.0.0.1:8080/health</span></span></code></pre>
+          <span class="mk-code-block-status" role="status"></span>
+        </figure>
+        <p class="dc-way-desc">The <a href="https://github.com/kyr0/defuss-container#usage" target="_blank" rel="noopener">README</a> lists every command and every <code>app.json</code> field.</p>
+      </div>
+      <div class="separator dc-sep-vertical" data-orientation="vertical" role="separator"></div>
+      <hr class="separator dc-sep-horizontal">
+      <div class="dc-way">
+        <h3 class="dc-way-title"><svg class="dc-icon" aria-hidden="true"><use href="#i-bot"/></svg>Vibe coding</h3>
+        <p class="dc-way-desc">Paste this prompt into your coding agent inside your Bun app. It links the repository, so the agent works from the current application contract.</p>
+        <div class="dc-prompt">
+          <div class="mockup-code" data-chrome="mac" data-title="coding agent · ~/your-bun-app" data-wrap id="agent-prompt">
+          <pre data-prefix=">"><code>Make this Bun app deployable with defuss-container: https://github.com/kyr0/defuss-container</code></pre>
+          <pre data-prefix=""><code>Read the Application contract in its README first. package.json needs nonempty scripts.start and scripts.stop and a committed bun.lock; the start script stays in the foreground and binds 0.0.0.0, and the process closes its databases on SIGTERM.</code></pre>
+          <pre data-prefix=""><code>Keep persistent data under ./var and scratch files under ./tmp, read from ./input and ./etc, write results to ./output. Scripts run with bun exec in a distroless image, so no bash, curl or other system tools.</code></pre>
+          <pre data-prefix=""><code>Add a /health endpoint, then write an app.json with ports, env and health for it.</code></pre>
+            <pre data-prefix="" data-tone="muted" data-cursor><code>send</code></pre>
+          </div>
+          <button type="button" class="btn dc-prompt-copy" data-variant="secondary" data-size="sm" id="copy-prompt"><svg class="dc-icon" aria-hidden="true"><use href="#i-copy"/></svg><span>Copy prompt</span></button>
+          <span class="sr-only" role="status" id="copy-prompt-status"></span>
+        </div>
+      </div>
+    </div>
+    </div>
+  </section>
+
+  <section id="api" class="container dc-section parallax-reveal" aria-labelledby="api-title">
+    <header class="mk-section-header">
+      <div class="mk-section-header-copy">
+        <span class="mk-section-header-eyebrow">HTTP API and daemon control</span>
+        <h2 class="mk-section-header-title" id="api-title">Script it</h2>
+        <p class="mk-section-header-desc">The CLI and the desktop app use nothing but this JSON API on 127.0.0.1. Every request carries the bearer token from <code>connection.json</code>, which rotates on each daemon start; requests with a browser <code>Origin</code> are rejected.</p>
+      </div>
+    </header>
+    <div class="dc-ways">
+      <div class="dc-way">
+        <h3 class="dc-way-title"><svg class="dc-icon" aria-hidden="true"><use href="#i-terminal"/></svg>Call it, run it</h3>
+        <p class="dc-way-desc">Requests with <code>curl</code>, the development daemon's verbs and the installed login service. Actions are <code>build</code>, <code>deploy</code> with a <code>release</code>, <code>start</code>, <code>stop</code>, <code>rollback</code>, <code>backup</code>, <code>restore</code> with a <code>backup</code>, and <code>delete</code> with <code>confirm</code> set to the app's name. The login service has not been run on any platform yet.</p>
+        <figure class="mk-code-block dc-code">
+          <div class="mk-code-block-head"><div class="mk-code-block-tabs" role="radiogroup" aria-label="Example"><label><input type="radio" name="dc-api" value="curl" checked>curl</label><label><input type="radio" name="dc-api" value="daemon">daemon</label><label><input type="radio" name="dc-api" value="service">service</label></div><button class="mk-code-block-copy" type="button" aria-label="Copy code"><svg class="dc-icon" aria-hidden="true"><use href="#i-copy"/></svg></button></div>
+          <pre data-tab="curl" data-numbers><code><span>conn=<span class="mk-code-block-s">./var/home/connection.json</span>    <span class="mk-code-block-c"># the make start daemon</span></span><span>token=<span class="mk-code-block-s">$(jq</span> -r .token $conn)</span><span>api=<span class="mk-code-block-s">$(jq</span> -r .address $conn)          <span class="mk-code-block-c"># http://127.0.0.1:63705</span></span><span><span class="mk-code-block-k">curl</span> -s -H <span class="mk-code-block-s">"Authorization: Bearer $token"</span> $api/v1/apps</span><span><span class="mk-code-block-k">curl</span> -s -X POST -H <span class="mk-code-block-s">"Authorization: Bearer $token"</span> -H <span class="mk-code-block-s">'Content-Type: application/json'</span> -d <span class="mk-code-block-s">'{"action":"start"}'</span> $api/v1/apps/hello/actions</span><span><span class="mk-code-block-k">defuss-container</span> api GET /v1/jobs    <span class="mk-code-block-c"># the same through the CLI's client</span></span></code></pre>
+          <pre data-tab="daemon" data-numbers><code><span><span class="mk-code-block-k">make</span> start                           <span class="mk-code-block-c"># development daemon on ./var/home</span></span><span><span class="mk-code-block-k">make</span> status                          <span class="mk-code-block-c"># running, dead or stopped</span></span><span><span class="mk-code-block-k">make</span> log                             <span class="mk-code-block-c"># last daemon log lines</span></span><span><span class="mk-code-block-k">make</span> stop                            <span class="mk-code-block-c"># SIGTERM; running jobs finish first</span></span><span><span class="mk-code-block-k">defuss-containerd</span> --home DIR --engine PATH --port <span class="mk-code-block-n">63705</span></span></code></pre>
+          <pre data-tab="service" data-numbers><code><span><span class="mk-code-block-k">python3</span> scripts/install.py --service  <span class="mk-code-block-c"># registers and starts it</span></span><span><span class="mk-code-block-k">systemctl</span> --user status defuss-container                    <span class="mk-code-block-c"># Linux</span></span><span><span class="mk-code-block-k">launchctl</span> print gui/$(id -u)/org.defuss.container           <span class="mk-code-block-c"># macOS</span></span><span><span class="mk-code-block-k">Start-ScheduledTask</span> -TaskName <span class="mk-code-block-s">'Defuss Container'</span>             <span class="mk-code-block-c"># Windows</span></span></code></pre>
+          <span class="mk-code-block-status" role="status"></span>
+        </figure>
+      </div>
+      <div class="separator dc-sep-vertical" data-orientation="vertical" role="separator"></div>
+      <hr class="separator dc-sep-horizontal">
+      <div class="dc-way">
+        <h3 class="dc-way-title"><svg class="dc-icon" aria-hidden="true"><use href="#i-layers"/></svg>Routes</h3>
+        <div class="card dc-table-card">
+          <div class="card-content">
+            <table class="table dc-table dc-routes" data-size="sm">
+              <thead><tr><th scope="col">Method</th><th scope="col">Route</th><th scope="col">Result</th></tr></thead>
+              <tbody>
+                  <tr><td><span class="badge" data-variant="secondary" data-size="xs">GET</span></td><td><code>/v1/health</code></td><td>Software and API version</td></tr>
+                  <tr><td><span class="badge" data-variant="secondary" data-size="xs">GET</span></td><td><code>/v1/doctor</code></td><td>Engine version, provider, hypervisor checks</td></tr>
+                  <tr><td><span class="badge" data-variant="secondary" data-size="xs">GET</span></td><td><code>/v1/apps</code></td><td>Registered apps</td></tr>
+                  <tr><td><span class="badge" data-variant="default" data-size="xs">POST</span></td><td><code>/v1/apps</code></td><td>Register an app spec; 201</td></tr>
+                  <tr><td><span class="badge" data-variant="secondary" data-size="xs">GET</span></td><td><code>/v1/apps/{name}</code></td><td>App record and observed engine state</td></tr>
+                  <tr><td><span class="badge" data-variant="secondary" data-size="xs">GET</span></td><td><code>/v1/apps/{name}/releases</code></td><td>Successful builds</td></tr>
+                  <tr><td><span class="badge" data-variant="secondary" data-size="xs">GET</span></td><td><code>/v1/apps/{name}/backups</code></td><td>Backups with checksums</td></tr>
+                  <tr><td><span class="badge" data-variant="secondary" data-size="xs">GET</span></td><td><code>/v1/apps/{name}/logs</code></td><td>Last 200 workload log lines</td></tr>
+                  <tr><td><span class="badge" data-variant="default" data-size="xs">POST</span></td><td><code>/v1/apps/{name}/actions</code></td><td>Queue an action; 202 and a job</td></tr>
+                  <tr><td><span class="badge" data-variant="secondary" data-size="xs">GET</span></td><td><code>/v1/jobs</code></td><td>Most recent 200 jobs</td></tr>
+                  <tr><td><span class="badge" data-variant="secondary" data-size="xs">GET</span></td><td><code>/v1/jobs/{id}</code></td><td>One job record</td></tr>
+                  <tr><td><span class="badge" data-variant="secondary" data-size="xs">GET</span></td><td><code>/v1/jobs/{id}/log</code></td><td>The job's command log</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <p class="dc-way-desc">Errors are <code>{"error":{"message":"..."}}</code> with 401, 403, 404, 409 or 400. <a href="https://github.com/kyr0/defuss-container/blob/main/docs/API.md" target="_blank" rel="noopener">docs/API.md</a> has the full contract.</p>
+      </div>
+    </div>
+  </section>
+
+  <div class="container dc-section parallax-reveal" data-reveal="zoom">
+    <section class="mk-cta" data-variant="dark" aria-labelledby="cta-title">
+      <div class="mk-cta-inner">
+        <div class="mk-cta-copy">
+          <h2 class="mk-cta-title" id="cta-title">Your Bun services, each in its own microVM</h2>
+          <p class="mk-cta-desc">Built from a Git commit in a disposable VM, deployed behind a health check, backed up and restored on your own machine.</p>
+        </div>
+        <div class="mk-cta-actions">
+          <a class="btn" data-size="lg" href="https://github.com/kyr0/defuss-container" target="_blank" rel="noopener">View on GitHub<svg class="dc-icon dc-ext" aria-hidden="true"><use href="#i-external"/></svg><span class="sr-only"> (opens in a new tab)</span></a>
+          <a class="btn" data-variant="outline" data-size="lg" href="https://github.com/kyr0/defuss-container/blob/main/ARCH.md" target="_blank" rel="noopener">Read the architecture<svg class="dc-icon dc-ext" aria-hidden="true"><use href="#i-external"/></svg><span class="sr-only"> (opens in a new tab)</span></a>
+        </div>
+        <p class="mk-cta-note">MIT licensed · release 0.1.0, the first source release</p>
+      </div>
+    </section>
+  </div>
+
+  </main>
+
+  <footer class="mk-footer" style="width:100%">
+    <div class="mk-footer-inner">
+      <nav class="mk-footer-nav dc-footer-nav" aria-label="Footer">
+        <div class="mk-footer-col">
+          <h3 class="mk-footer-heading">Project</h3>
+          <ul class="mk-footer-list">
+            <li><a href="https://github.com/kyr0/defuss-container" target="_blank" rel="noopener">Source code<svg class="dc-icon dc-ext" aria-hidden="true"><use href="#i-external"/></svg><span class="sr-only"> (opens in a new tab)</span></a></li>
+            <li><a href="https://github.com/kyr0/defuss-container/blob/main/ARCH.md" target="_blank" rel="noopener">Architecture<svg class="dc-icon dc-ext" aria-hidden="true"><use href="#i-external"/></svg><span class="sr-only"> (opens in a new tab)</span></a></li>
+            <li><a href="https://github.com/kyr0/defuss-container/blob/main/docs/API.md" target="_blank" rel="noopener">HTTP API<svg class="dc-icon dc-ext" aria-hidden="true"><use href="#i-external"/></svg><span class="sr-only"> (opens in a new tab)</span></a></li>
+            <li><a href="https://github.com/kyr0/defuss-container/blob/main/docs/SECURITY.md" target="_blank" rel="noopener">Security boundaries<svg class="dc-icon dc-ext" aria-hidden="true"><use href="#i-external"/></svg><span class="sr-only"> (opens in a new tab)</span></a></li>
+            <li><a href="https://github.com/kyr0/defuss-container/blob/main/docs/VERIFICATION.md" target="_blank" rel="noopener">Verification<svg class="dc-icon dc-ext" aria-hidden="true"><use href="#i-external"/></svg><span class="sr-only"> (opens in a new tab)</span></a></li>
+          </ul>
+        </div>
+        <div class="mk-footer-col">
+          <h3 class="mk-footer-heading">Built on</h3>
+          <ul class="mk-footer-list">
+            <li><a href="https://github.com/smol-machines/smolvm/releases/tag/v1.32.4" target="_blank" rel="noopener">smolvm 1.32.4<svg class="dc-icon dc-ext" aria-hidden="true"><use href="#i-external"/></svg><span class="sr-only"> (opens in a new tab)</span></a></li>
+            <li><a href="https://hub.docker.com/r/oven/bun/tags?name=1.4.4-distroless" target="_blank" rel="noopener">Bun distroless image<svg class="dc-icon dc-ext" aria-hidden="true"><use href="#i-external"/></svg><span class="sr-only"> (opens in a new tab)</span></a></li>
+            <li><a href="https://tauri.defuss.org" target="_blank" rel="noopener">defuss-tauri<svg class="dc-icon dc-ext" aria-hidden="true"><use href="#i-external"/></svg><span class="sr-only"> (opens in a new tab)</span></a></li>
+            <li><a href="https://github.com/kyr0/defuss-shadcn" target="_blank" rel="noopener">defuss-shadcn<svg class="dc-icon dc-ext" aria-hidden="true"><use href="#i-external"/></svg><span class="sr-only"> (opens in a new tab)</span></a></li>
+          </ul>
+        </div>
+        <div class="mk-footer-col">
+          <h3 class="mk-footer-heading">Professional consulting services</h3>
+          <aside class="corner-leaf dc-ad" aria-label="Consulting by Aron Homberg">
+            <div class="dc-ad-head">
+              <div class="aura aura-glow aura-gold dc-ad-portrait" style="--shape-round:1.5rem"><img class="shape-squircle" src="assets/aron-homberg.jpg" width="400" height="400" alt="Portrait of Aron Homberg" loading="lazy"></div>
+              <div>
+                <p class="dc-ad-name">Aron Homberg</p>
+                <p class="dc-ad-role">Freelance expert · independent AI researcher</p>
+              </div>
+            </div>
+            <a class="btn" data-size="sm" href="https://www.linkedin.com/in/aronhomberg/" target="_blank" rel="noopener"><svg class="dc-icon dc-icon-fill" aria-hidden="true"><use href="#i-linkedin"/></svg>Connect on LinkedIn<svg class="dc-icon dc-ext" aria-hidden="true"><use href="#i-external"/></svg><span class="sr-only"> (opens in a new tab)</span></a>
+          </aside>
+        </div>
+      </nav>
+      <hr class="separator mk-footer-rule">
+      <div class="mk-footer-bottom">
+        <a href="#top" class="mk-footer-brand" aria-label="Back to the top"><svg class="dc-icon" aria-hidden="true"><use href="#i-logo"/></svg><span class="mk-footer-brand-name">defuss-container</span></a>
+        <div class="mk-footer-meta">
+          <p class="mk-footer-copy">© 2026 <a href="https://www.linkedin.com/in/aronhomberg/" target="_blank" rel="noopener">Aron Homberg (kyr0)<svg class="dc-icon dc-ext" aria-hidden="true"><use href="#i-external"/></svg><span class="sr-only"> (opens in a new tab)</span></a> · MIT. The engine bundle, crates and npm dependencies are third-party software under their own licenses.</p>
+        </div>
+      </div>
+    </div>
+  </footer>
+</div>
+<div class="fab" data-scroll-top>
+  <a class="btn fab-trigger" href="#top" aria-label="Back to top"><span class="fab-icon" aria-hidden="true"><svg class="dc-icon"><use href="#i-arrow-up"/></svg></span></a>
+</div>
+
+<!-- ECharts draws the defuss-shadcn charts; the component expects it as a classic script before it mounts. -->
+<script defer src="https://cdn.jsdelivr.net/npm/echarts@6.1.0/dist/echarts.min.js" integrity="sha384-C2iskrW/uPW46KzOjrvJIQo4YkV8lkD+QS0CrDN18IIPIpT/g2USu8bTP3nvmIAD" crossorigin="anonymous"></script>
+<script type="module" src="https://cdn.jsdelivr.net/gh/kyr0/defuss-shadcn@0.9.11/dist/components/all.min.js" integrity="sha384-smU3aE2UPGvVE+nQS/ekmmE86ccjq2yap/zPMBoITba6SOq71Fil6vo4HZHaFZRY" crossorigin="anonymous"></script>
+<script type="module" src="assets/site.js"></script>
+</body>
+</html>

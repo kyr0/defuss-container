@@ -1,4 +1,4 @@
-"""Resource measurement for the e2e suite: per-process peak RSS, VM host-process RSS, guest memory, disk use.
+"""Resource measurement for the e2e suite: per-process peak RSS, VM host-process RSS, guest memory, disk use, job time.
 
 WHY per-process peak via wait4 instead of sampling: sampling misses short peaks of the CLI and daemon; the kernel
 tracks the high-water mark exactly. VMs are not our children, so their host processes are sampled instead.
@@ -6,14 +6,17 @@ tracks the high-water mark exactly. VMs are not our children, so their host proc
 from __future__ import annotations
 
 import ctypes
+import datetime
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
 import threading
 import time
 from dataclasses import dataclass, field
+from typing import Any
 
 WINDOWS = os.name == "nt"
 
@@ -164,3 +167,30 @@ def mib(n: int | None) -> str:
 
 def now() -> float:
     return time.monotonic()
+
+
+# One daemon log line per job event, ISO-8601 UTC timestamp first (src/service.rs).
+_JOB_EVENT = re.compile(r"^(\S+Z)\s+\w+\s+\S+ job (started|succeeded|failed) job=(\S+) app=(\S+)(?: action=(\w+))?")
+
+
+def job_durations(log: str) -> list[dict[str, Any]]:
+    """Each job's duration as the daemon saw it, in start order.
+
+    WHY the daemon log instead of timing `defuss-container wait`: the CLI polls, so its wall time adds up to one poll
+    interval; the daemon stamps start and end in microseconds. VERIFIED: the log lines carry `job started ... action=`
+    and `job succeeded|failed job=` (output/e2e/daemon.log).
+    """
+    started: dict[str, tuple[datetime.datetime, str, str]] = {}
+    jobs: list[dict[str, Any]] = []
+    for line in log.splitlines():
+        m = _JOB_EVENT.match(line)
+        if not m:
+            continue
+        at, event, job, app, action = m.groups()
+        when = datetime.datetime.fromisoformat(at.replace("Z", "+00:00"))
+        if event == "started":
+            started[job] = (when, app, action or "")
+        elif job in started:
+            begin, app, action = started.pop(job)
+            jobs.append({"app": app, "action": action, "ok": event == "succeeded", "seconds": round((when - begin).total_seconds(), 3), "start": begin.isoformat()})
+    return sorted(jobs, key=lambda j: j["start"])

@@ -22,8 +22,9 @@ ALIVE = [ -f $(PID) ] && kill -0 "$$(cat $(PID))" 2>/dev/null
 CLI_BIN = $(CURDIR)/$(E2E_INSTALL)/bin/defuss-container
 GUI_BIN = $(CURDIR)/desktop/dist-tauri-build/release/defuss-tauri-host
 ARGS   ?= list
+SITE_PORT ?= 63706
 
-.PHONY: help setup install start stop restart status log metrics bench check lint test coverage e2e cli start-cli gui start-gui desktop native verify build
+.PHONY: help setup install start detach site stop restart status log metrics bench check lint test coverage e2e cli start-cli gui start-gui desktop native verify build
 .DEFAULT_GOAL := help
 
 help: ## list the verbs with their usage (default goal)
@@ -39,12 +40,22 @@ install: ## release build + checksummed engine into $(E2E_INSTALL) (the artifact
 	python3 scripts/install.py --home $(E2E_INSTALL)
 
 start: install ## run the installed daemon detached on $(DEV_HOME): pid in tmp/, logs in var/log/
+	@$(MAKE) --no-print-directory detach
+	@echo "CLI: make start-cli, or $(E2E_INSTALL)/bin/defuss-container --home $(DEV_HOME)"
+
+# Runs $$RUN detached as service $(NAME): its own session (or process group), pid in tmp/, stdout/stderr in var/log/.
+detach:
 	@mkdir -p var/log tmp
 	@if $(ALIVE); then echo "running pid=$$(cat $(PID))"; exit 0; fi; \
 	if command -v setsid >/dev/null 2>&1; then nohup setsid sh -c "$$RUN" >$(LOG).stdout 2>$(LOG).stderr </dev/null & \
 	else set -m; nohup sh -c "$$RUN" >$(LOG).stdout 2>$(LOG).stderr </dev/null & set +m; fi; \
 	echo $$! >$(PID); sleep 1; \
-	if $(ALIVE); then echo "running pid=$$(cat $(PID)); CLI: $(E2E_INSTALL)/bin/defuss-container --home $(DEV_HOME)"; else echo "dead; see: make log"; exit 1; fi
+	if $(ALIVE); then echo "running pid=$$(cat $(PID))"; else echo "dead; see: make log NAME=$(NAME)"; exit 1; fi
+
+# The static project site (docs/) as its own service; status, log and stop take NAME=site.
+site: ## serve the project site docs/ on http://127.0.0.1:$(SITE_PORT) in the background; stop: make stop NAME=site
+	@$(MAKE) --no-print-directory detach NAME=site RUN='python3 -u -m http.server $(SITE_PORT) --bind 127.0.0.1 --directory docs'
+	@echo "site: http://127.0.0.1:$(SITE_PORT)/"
 
 stop: ## SIGTERM the daemon group (running jobs finish first), SIGKILL after 60 s
 	@if $(ALIVE); then p=$$(cat $(PID)); kill -s TERM -- -$$p 2>/dev/null || kill -s TERM $$p; \

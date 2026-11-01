@@ -27,7 +27,10 @@ impl Service {
         Ok(Self {
             root,
             store,
-            engine: Engine { executable: engine },
+            engine: Engine {
+                executable: engine,
+                exec_wait: Duration::from_secs(15),
+            },
             gate: Arc::new(Semaphore::new(2)),
             register_lock: std::sync::Mutex::new(()),
         })
@@ -754,7 +757,12 @@ elif verb=='start':
  # A crashing workload with --stop-on-exit powers the machine off right after start.
  s['running']='--no-workload' in args or launch['release']!=crash
  if '--no-workload' in args and (root/'exec-not-ready').exists():(root/'exec-pending').write_text((root/'exec-not-ready').read_text())
-elif verb=='stop':s['running']=False
+ # A broken provision-only boot: no exec succeeds until the machine stops (observed in smolvm 1.32.4).
+ broken=int((root/'broken-boots').read_text()) if (root/'broken-boots').exists() else 0
+ if '--no-workload' in args and broken:(root/'broken-boots').write_text(str(broken-1));(root/'exec-pending').write_text('1000000')
+elif verb=='stop':
+ s['running']=False
+ if (root/'exec-pending').exists():(root/'exec-pending').unlink()
 elif verb=='delete':s['exists']=False
 elif verb=='logs':print('fixture logs')
 elif verb=='exec':
@@ -871,6 +879,34 @@ state.write_text(json.dumps(s))
         let backup = h.service.backup(&mut h.app, &log).unwrap();
         assert_eq!(h.service.backups("hello").unwrap()[0]["id"], backup["id"]);
         assert!(h.service.engine.is_running("defuss-test").unwrap());
+    }
+    #[test]
+    fn backup_boots_again_when_a_provision_only_boot_never_accepts_exec() {
+        let mut h = harness();
+        h.service.engine.exec_wait = Duration::from_millis(300);
+        let a = release(&h, "base");
+        let log = h.fake.join("log");
+        h.service.deploy(&mut h.app, &a.id, &log).unwrap();
+        fs::write(h.fake.join("broken-boots"), "1").unwrap();
+        let backup = h.service.backup(&mut h.app, &log).unwrap();
+        assert_eq!(h.service.backups("hello").unwrap()[0]["id"], backup["id"]);
+        let commands = fs::read_to_string(h.fake.join("commands")).unwrap();
+        assert_eq!(commands.matches("--no-workload").count(), 2);
+    }
+    #[test]
+    fn backup_fails_after_two_provision_only_boots_without_exec() {
+        let mut h = harness();
+        h.service.engine.exec_wait = Duration::from_millis(300);
+        let a = release(&h, "base");
+        let log = h.fake.join("log");
+        h.service.deploy(&mut h.app, &a.id, &log).unwrap();
+        fs::write(h.fake.join("broken-boots"), "2").unwrap();
+        let error = h.service.backup(&mut h.app, &log).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("never accepted exec"),
+            "{error:#}"
+        );
+        assert!(h.service.backups("hello").unwrap().is_empty());
     }
     #[test]
     fn corrupted_release_and_base_change_are_rejected_before_stop() {

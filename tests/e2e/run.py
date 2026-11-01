@@ -2,7 +2,7 @@
 """End-to-end gate: the installed artifact (CLI, daemon, engine) drives a real VM; then the built desktop UI drives
 the same daemon in Playwright. Every CLI command and the full guest lifecycle run at least once.
 
-Writes output/e2e/: report.json (steps), resources.json + summary.md (peak RSS, disk), daemon.log, gui/.
+Writes output/e2e/: report.json (steps), resources.json + summary.md (peak RSS, disk, job durations), daemon.log, gui/.
 Requires: a hypervisor, network access (Docker Hub base image, npm registry for the fixture's dependency), Git,
 openssl, Node with the desktop dependencies installed.
 """
@@ -410,6 +410,8 @@ def main() -> int:
         resources["peak_rss_bytes"] = {"daemon": max(daemon.peaks) if daemon and daemon.peaks else None, "cli": cli.peak or None}
         resources["vm"] = sampler.peaks
         resources["cli_calls"] = cli.calls
+        daemon_log = out / "daemon.log"
+        resources["jobs"] = [j for j in measure.job_durations(daemon_log.read_text()) if j["app"] == APP] if daemon_log.exists() else []
         (out / "resources.json").write_text(json.dumps(resources, indent=2) + "\n")
         (out / "summary.md").write_text(summary(resources, ok))
         report.write(ok, {"provider": resources.get("provider"), "platform": sys.platform})
@@ -432,6 +434,14 @@ def summary(r: dict[str, Any], ok: bool) -> str:
             lines.append(f"| {key} | {measure.mib(value['allocated_bytes'])} | {measure.mib(value['apparent_bytes'])} |")
     for rel, files in disk.get("release_each", {}).items():
         lines.append(f"| release {rel[:8]} | " + ", ".join(f"{k} {measure.mib(v)}" for k, v in files.items()) + " | |")
+    jobs = r.get("jobs", [])
+    if jobs:
+        # The first deploy creates the machine from the release image: the app's start from scratch.
+        lines += ["", f"| {APP} job (daemon log) | Seconds |", "|---|---|"]
+        first_deploy = next((i for i, j in enumerate(jobs) if j["action"] == "Deploy"), None)
+        for i, j in enumerate(jobs):
+            note = " (from scratch: machine created, booted, healthy)" if i == first_deploy else "" if j["ok"] else " (failed, as the e2e intends)"
+            lines.append(f"| {j['action']}{note} | {j['seconds']:.2f} |")
     return "\n".join(lines) + "\n"
 
 

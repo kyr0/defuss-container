@@ -33,7 +33,8 @@ CONFIG = {
     # geschuetzte_begriffe: terms a replacement must keep) and "edit" (max_part_chars, heading_depth, attempts, the
     # budgets, tool_scope, trace, max_tokens_total); unset keys keep pro-edit's defaults.
     # AGENTS.md holds the plugin-managed defuss-vae block, written in VAE-DIALECT where `→` is an operator.
-    "prose": {"allow": {"AGENTS.md": "→"}, "phrases": [], "html": []},
+    # docs/index.html is the project site (GitHub Pages from docs/); its text is prose.
+    "prose": {"allow": {"AGENTS.md": "→"}, "phrases": [], "html": ["docs/*.html"]},
 }
 
 # Deterministic invariants only; no semantic guesses.

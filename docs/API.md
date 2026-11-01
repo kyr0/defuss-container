@@ -2,6 +2,19 @@
 
 Connection discovery: `<DEFUSS_CONTAINER_HOME>/connection.json` contains `address` (HTTP on 127.0.0.1, port 63705 unless `--port` / `DEFUSS_CONTAINER_PORT` sets another; `0` = OS-assigned) and `token`. All routes require `Authorization: Bearer TOKEN` and the exact endpoint `Host` header. Any browser `Origin` is rejected. Credentials rotate on daemon restart; reconnect clients after a 401. No CORS or unauthenticated health endpoint. Request body limit: 1 MiB. JSON responses are `Cache-Control: no-store`.
 
+Example with `curl` and `jq` against the `make start` daemon (an installed daemon keeps `connection.json` in its state directory):
+
+```sh
+conn=./var/home/connection.json
+token=$(jq -r .token $conn)
+api=$(jq -r .address $conn)
+curl -s -H "Authorization: Bearer $token" $api/v1/health
+curl -s -X POST -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
+  -d '{"action":"start"}' $api/v1/apps/hello/actions
+```
+
+The first request prints `{"api":1,"version":"0.1.0"}`; the second queues a start job, or answers `{"error":{"message":"not found: hello"}}` with 404 when no app has that name. `defuss-container api METHOD PATH [--body JSON]` sends any request through the same Rust client the desktop bridge uses.
+
 | Method / route | Result |
 |---|---|
 | GET `/v1/health` | Software/API version |

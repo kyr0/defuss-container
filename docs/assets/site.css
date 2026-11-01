@@ -1,0 +1,141 @@
+/* Page layout on top of defuss-shadcn 0.9.11, after the defuss-lexicalsearch site. Colours, radii and shadows come
+   from defuss-shadcn tokens. */
+@layer components {
+  /* the base reset the defuss-shadcn Landing Page template assumes */
+  *, *::before, *::after { box-sizing: border-box; }
+  body { margin: 0; line-height: 1.6; background: var(--background); color: var(--foreground); font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
+  [hidden] { display: none !important; }
+  /* the header is a direct child of the page, so it stays sticky over every section */
+  .dc-page { overflow-x: clip; }
+  .dc-main { display: flex; flex-direction: column; gap: clamp(5rem, 11vw, 9rem); padding-block-end: clamp(5rem, 11vw, 9rem); }
+  .dc-section { width: 100%; max-width: 76rem; padding-inline: 1rem; scroll-margin-top: 5rem; }
+  .dc-icon { width: 1em; height: 1em; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .dc-icon-fill { fill: currentColor; stroke: none; }
+  .dc-ext { width: .75em; height: .75em; margin-inline-start: .15em; vertical-align: -.05em; opacity: .75; }
+  .mk-hero-note a, .mk-footer-copy a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+  .dc-hero-pill a { color: inherit; text-decoration: none; }
+  .dc-hero-pill > a:last-child { display: inline-flex; align-items: center; gap: .5rem; }
+  /* one line per phrase: text-rotate clips to 1lh, so the size follows the viewport on phones */
+  .dc-flip { margin: 0; font-size: clamp(1rem, 4.6vw, 2.5rem); font-weight: 700; letter-spacing: -.03em; line-height: 1.15; }
+  .dc-accent { background: linear-gradient(90deg, var(--chart-1), var(--chart-3)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+
+  /* the hero's feature grid under the actions, so the buttons stay above the fold */
+  .dc-intro { display: grid; gap: 2rem 2.25rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+    width: 100%; max-width: 64rem; margin: clamp(5.5rem, 13vw, 10rem) auto 0; padding-inline: 1.25rem; text-align: start; }
+  .dc-intro-item { display: flex; flex-direction: column; gap: .5rem; }
+  .dc-intro-icon { display: grid; place-items: center; width: 4.5rem; height: 4.5rem; border-radius: var(--radius-xl); font-size: 2.25rem;
+    color: var(--foreground); background: color-mix(in oklch, var(--chart-2) 22%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--chart-2) 35%, transparent); }
+  .dc-intro h3 { margin: .25rem 0 0; font-size: .9375rem; font-weight: 600; }
+  .dc-intro p { margin: 0; font-size: .8125rem; line-height: 1.6; color: var(--muted-foreground); text-wrap: pretty; }
+  :is(.dc-intro, .dc-runtime, .dc-way, .dc-table) code { font-family: var(--font-mono); font-size: .875em; }
+
+  /* between the intro and the next section: the viewport-high stage shows only its middle band */
+  .dc-flythrough { padding-inline: 1rem; margin-block: calc(-1 * clamp(4rem, 12vh, 9rem)); }
+  .dc-flythrough .parallax-stage { clip-path: inset(max(0px, calc((100dvh - 28rem) / 2)) 0 round var(--radius-xl)); }
+  .dc-fly-word { margin: 0; font-size: clamp(3rem, 10vw, 6rem); font-weight: 800; letter-spacing: -.04em; background: linear-gradient(90deg, #9db2ff, #e3a6ff); -webkit-background-clip: text; background-clip: text; color: transparent; }
+
+  /* app: the dashboard screenshot in a window frame with a soft glow */
+  .dc-shot { margin: 2.5rem 0 0; display: flex; flex-direction: column; gap: .875rem; }
+  .dc-shot-frame { overflow: hidden; border-radius: var(--radius-xl); background-color: var(--card);
+    box-shadow: var(--shadow-2xl), 0 30px 80px -30px color-mix(in oklch, var(--chart-2) 45%, transparent); }
+  .dc-shot-frame img { display: block; width: 100%; height: auto; }
+  .dc-shot-caption { text-align: center; font-size: .8125rem; color: var(--muted-foreground); }
+
+  /* why: the architecture figure above the four decision cards */
+  .dc-arch { margin-block: 2.5rem 0; }
+  #why .mk-feature-cards { margin-block-start: 2.5rem; }
+  .dc-card-icon { width: 1.25rem; height: 1.25rem; color: var(--chart-2); }
+  .mk-feature-card-desc code { font-family: var(--font-mono); font-size: .875em; }
+  .mk-process-step-desc code { font-family: var(--font-mono); font-size: .875em; }
+
+  /* how: the runtime notes and the paths table under the diagram */
+  .dc-runtime { display: grid; gap: 2rem 2.5rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 24rem), 1fr)); margin-block-start: 2.5rem; }
+  .dc-runtime-col { display: flex; flex-direction: column; gap: .75rem; min-width: 0; }
+  .dc-table-card { overflow: hidden; }
+  .dc-table-card .card-content { overflow-x: auto; padding: 0; }
+
+  /* measured: metric cards, two charts side by side, disk table and planning notes */
+  .dc-stats { margin-block-start: 2.5rem; }
+  .dc-charts { display: grid; gap: 1.25rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 30rem), 1fr)); margin-block-start: 1.25rem; }
+  .dc-chart { margin: 0; padding: 1.25rem 1.25rem 1rem; }
+  .chart-dek code, .chart-source code { font-family: var(--font-mono); font-size: .875em; }
+  .dc-bench { margin: 0; align-self: stretch; aspect-ratio: auto; overflow: visible; background: var(--card); }
+  .dc-bench .card-content { overflow-x: auto; }
+  .dc-table th { text-align: start; vertical-align: top; white-space: nowrap; }
+  .dc-table td { vertical-align: top; }
+  .dc-table :is(th, td) { padding-inline: .5rem; }
+  .dc-num { text-align: end; font-family: var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .dc-table .dc-num { text-align: end; }
+  .dc-table th.dc-num { font-family: inherit; }
+  .dc-footprint { display: grid; gap: 1.25rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 26rem), 1fr)); margin-block-start: 1.25rem; }
+  .dc-plan { margin: 0; padding-inline-start: 1.1rem; display: grid; gap: .75rem; color: var(--muted-foreground); text-wrap: pretty; }
+  .dc-plan strong { color: var(--foreground); }
+  .mk-section-header-desc a { color: var(--foreground); text-decoration: underline; text-underline-offset: 2px; }
+  .mk-section-header-desc code { font-family: var(--font-mono); font-size: .875em; }
+
+  /* "Use it": one leaf-cornered panel on a faint dot pattern, two ways side by side or stacked */
+  .dc-use {
+    --shape-round: 3rem; --shape-ink: color-mix(in oklch, var(--foreground) 9%, transparent); --shape-pattern: 18px;
+    padding: clamp(1.5rem, 4vw, 3rem); border: 1px solid var(--border);
+    background-color: color-mix(in oklch, var(--card) 75%, transparent);
+    box-shadow: var(--shadow-xl), 0 30px 80px -40px color-mix(in oklch, var(--chart-2) 45%, transparent);
+  }
+  .dc-ways { display: flex; gap: 2.5rem; margin-block-start: 2.5rem; }
+  .dc-way { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 1.5rem; }
+  .dc-way-title { display: flex; align-items: center; gap: .5rem; margin: 0; font-size: 1.25rem; font-weight: 600; }
+  .dc-way-desc { margin: 0; color: var(--muted-foreground); }
+  .dc-way-desc a { color: var(--foreground); text-decoration: underline; text-underline-offset: 2px; }
+  .dc-way .mk-code-block { margin: 0; }
+  /* defuss-shadcn maps only its npm/pnpm/bun tab values to panels; the same rule for this page's tabs */
+  .mk-code-block:has(input[value="start"]:checked) [data-tab="start"],
+  .mk-code-block:has(input[value="app.json"]:checked) [data-tab="app.json"],
+  .mk-code-block:has(input[value="deploy"]:checked) [data-tab="deploy"],
+  .mk-code-block:has(input[value="curl"]:checked) [data-tab="curl"],
+  .mk-code-block:has(input[value="daemon"]:checked) [data-tab="daemon"],
+  .mk-code-block:has(input[value="service"]:checked) [data-tab="service"] { display: block; }
+  /* numbers and literals: the component colors keywords, strings and comments but has no number token */
+  .mk-code-block-n { color: oklch(82% .12 75); }
+  .dc-routes td:first-child { width: 1%; }
+  .dc-routes code { white-space: nowrap; }
+  .dc-way .mk-code-block code > span { white-space: pre-wrap; overflow-wrap: anywhere; padding-inline-start: 3rem; text-indent: -3rem; }
+  .dc-sep-horizontal { display: none; }
+  @media (max-width: 56rem) {
+    .dc-ways { flex-direction: column; }
+    .dc-sep-vertical { display: none; }
+    .dc-sep-horizontal { display: block; width: 100%; margin: 0; }
+  }
+  .dc-prompt { position: relative; }
+  .dc-prompt .mockup-code { margin: 0; }
+  .dc-prompt-copy { position: absolute; inset-block-start: .3rem; inset-inline-end: .5rem; }
+
+  /* consulting CTA: portrait + heading, then the text column, then the action */
+  .dc-consult { --shape-round: 3rem; overflow: hidden; border: 1px solid var(--border); background-color: var(--card); }
+  .dc-consult .mk-cta, .dc-consult .mk-cta[data-variant] { background: transparent; }
+  .dc-consult .mk-cta[data-variant] .mk-cta-inner { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto; align-items: center; gap: 1.25rem 2rem; text-align: start;
+    padding: clamp(1.5rem, 3vw, 2.25rem) clamp(1.5rem, 3vw, 2.5rem); background: transparent; border-radius: 0; }
+  .dc-consult .mk-cta[data-variant] .mk-cta-copy { display: contents; }
+  .dc-consult .dc-cta-head { grid-column: 1; display: flex; align-items: center; gap: 1.25rem; }
+  .dc-consult .mk-cta[data-variant] .mk-cta-title { margin: 0; font-size: clamp(1.25rem, 2.2vw, 1.625rem); }
+  .dc-consult .mk-cta[data-variant] .mk-cta-desc { grid-column: 2; margin: 0; font-size: .875rem; }
+  .dc-consult .mk-cta[data-variant] .mk-cta-actions { grid-column: 3; justify-content: flex-end; }
+  @media (max-width: 56rem) {
+    .dc-consult .mk-cta[data-variant] .mk-cta-inner { grid-template-columns: minmax(0, 1fr); }
+    .dc-consult .dc-cta-head, .dc-consult .mk-cta[data-variant] .mk-cta-desc, .dc-consult .mk-cta[data-variant] .mk-cta-actions { grid-column: auto; justify-content: flex-start; }
+  }
+  .dc-cta-portrait { width: 4rem; flex: none; }
+  .dc-cta-portrait img { display: block; width: 100%; height: auto; }
+
+  /* footer ad: a leaf-cornered panel with a squircle portrait in a gold halo */
+  .dc-ad {
+    --shape-round: 2rem; display: flex; flex-direction: column; gap: .875rem; padding: 1.25rem;
+    border: 1px solid var(--border); box-shadow: var(--shadow-lg);
+    background: linear-gradient(135deg, color-mix(in oklch, var(--chart-1) 16%, var(--card)), var(--card) 65%);
+  }
+  .dc-ad-head { display: flex; align-items: center; gap: .875rem; }
+  .dc-ad-portrait { width: 5.5rem; flex: none; }
+  .dc-ad-portrait img { display: block; width: 100%; height: auto; }
+  .dc-ad-name { margin: 0; font-size: 1.25rem; font-weight: 600; color: var(--foreground); }
+  .dc-ad-role { margin: 0; font-size: .8125rem; line-height: 1.5; color: var(--muted-foreground); }
+  .dc-ad .btn { align-self: flex-start; }
+  @media (min-width: 64rem) { .dc-footer-nav.mk-footer-nav { grid-template-columns: 1fr 1fr 1.8fr; } }
+}

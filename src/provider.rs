@@ -79,6 +79,8 @@ impl Platform for Windows {
 #[derive(Clone)]
 pub struct Engine {
     pub executable: PathBuf,
+    /// How long one provision-only boot may take to accept exec before it is booted again.
+    pub exec_wait: Duration,
 }
 impl Engine {
     pub fn platform(&self) -> Box<dyn Platform> {
@@ -186,18 +188,37 @@ impl Engine {
     /// VERIFIED: once in about 30 maintenance starts (macOS, 2026-10-31) an exec issued right after smolvm 1.32.4
     /// reported the provision-only start failed with "executable file `/usr/local/bin/bun` not found"; a later exec
     /// works. UNKNOWN: the engine-side cause. Waiting on `bun --version` turns that race into a bounded delay.
+    /// `machine start --no-workload`, then wait until the container accepts exec.
+    /// VERIFIED (smolvm 1.32.4, e2e daemon logs of 2026-10-31 and 2026-11-01): after some provision-only starts every exec
+    /// failed with `/usr/local/bin/bun` not found, and 30 s of retries did not help; the engine log showed no
+    /// difference from a working start. HYPOTHESIS: a fresh boot recovers, as the next start of the same machine did
+    /// a second later; falsifier: the second boot fails the same way. Cause UNKNOWN (engine).
     pub fn start_no_workload(&self, name: &str, seconds: u64, log: Option<&Path>) -> Result<()> {
-        self.machine("start", name, &["--no-workload".into()], seconds, log)?;
-        let started = std::time::Instant::now();
-        loop {
-            match self.exec(name, &[crate::BUN.into(), "--version".into()], 30, None) {
-                Ok(_) => return Ok(()),
-                Err(e) if started.elapsed() >= Duration::from_secs(30) => {
-                    return Err(e.context("machine started but its container never accepted exec"));
+        let mut last = None;
+        for boot in 0..2 {
+            if boot > 0 {
+                tracing::warn!(
+                    machine = name,
+                    "container never accepted exec; booting the machine again"
+                );
+                self.stop(name, 30, log)?;
+            }
+            self.machine("start", name, &["--no-workload".into()], seconds, log)?;
+            let started = std::time::Instant::now();
+            loop {
+                match self.exec(name, &[crate::BUN.into(), "--version".into()], 30, None) {
+                    Ok(_) => return Ok(()),
+                    Err(e) if started.elapsed() >= self.exec_wait => {
+                        last = Some(e);
+                        break;
+                    }
+                    Err(_) => std::thread::sleep(Duration::from_millis(250)),
                 }
-                Err(_) => std::thread::sleep(Duration::from_millis(250)),
             }
         }
+        Err(last
+            .expect("two boots ran")
+            .context("machine started twice but its container never accepted exec"))
     }
     pub fn create_args(app: &Application, root: &Path, image: &Path) -> Result<Vec<String>> {
         let dir = root.join("apps").join(&app.spec.name);

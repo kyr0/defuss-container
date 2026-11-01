@@ -35,3 +35,31 @@ Wrap: EVERY lead becomes a test | .vae/VERIFY.py rule | one MEMORY line with BC,
 2026-10-31T17:04:47Z s=b6ad2ae1 FINDING src/bin/defuss-containerd.rs Args.port learn=test: scripts/control-smoke.py: a taken port exits non-zero naming DEFUSS_CONTAINER_PORT
 2026-10-31T17:04:47Z s=b6ad2ae1 FINDING scripts/install.py main (binary copy) learn=none: the crash of an in-place overwrite was not reproduced here (macOS); no test pins it
 2026-10-31T17:04:47Z s=b6ad2ae1 FINDING agent workflow: background gate + stop hook learn=memory: .vae/MEMORY.md line: wait for the gate in the foreground
+2026-11-01T01:31:11Z s=b6ad2ae1 DONE fp=dbb2533d7ef6 cov=69.3% paths=AGENTS.md
+2026-11-01T01:31:11Z s=b6ad2ae1 FINDING AGENTS.md:37 L09/P07 learn=none: A documented shell check's coverage of the commands it names is not expressible as a VERIFY.py rule kind and gate overlap is runtime state; the AGENTS.md rule i
+2026-11-01T01:55:06Z s=b6ad2ae1 DONE fp=4161045a2e4e cov=69.3% paths=AGENTS.md,README.md,docs/VERIFICATION.md,docs/assets/site.css(+2)
+2026-11-01T01:55:06Z s=b6ad2ae1 FINDING README.md:12 P07 learn=none: A wording precision defect in a page; no rule kind can check what a sentence claims, and the edit run records it.
+2026-11-01T01:55:06Z s=b6ad2ae1 FINDING README.md:58 B02 learn=none: A wording precision defect in a page; no rule kind can check what a sentence claims, and the edit run records it.
+2026-11-01T01:55:06Z s=b6ad2ae1 FINDING README.md:8 T04 learn=none: A wording precision defect in a page; no rule kind can check what a sentence claims, and the edit run records it.
+2026-11-01T01:55:06Z s=b6ad2ae1 FINDING README.md:177 B02 learn=none: A wording precision defect in a page; no rule kind can check what a sentence claims, and the edit run records it.
+2026-11-01T01:55:06Z s=b6ad2ae1 FINDING docs/index.html:113 B02 learn=none: A wording precision defect in a page; no rule kind can check what a sentence claims, and the edit run records it.
+2026-11-01T01:55:06Z s=b6ad2ae1 FINDING docs/index.html:195 B02 learn=none: A wording precision defect in a page; no rule kind can check what a sentence claims, and the edit run records it.
+2026-11-01T01:55:06Z s=b6ad2ae1 FINDING docs/index.html:307 P07 learn=none: A wording precision defect in a page; no rule kind can check what a sentence claims, and the edit run records it.
+2026-11-01T01:55:06Z s=b6ad2ae1 FINDING docs/assets/site.css:.dc-table th learn=none: Visual layout defect found by rendering; the site has no automated visual test and one would pin CSS values.
+2026-11-01T01:55:06Z s=b6ad2ae1 FINDING docs/assets/site.css:.dc-flip learn=none: Visual layout defect found by rendering; the site has no automated visual test and one would pin CSS values.
+2026-11-01T01:55:06Z s=b6ad2ae1 FINDING docs/VERIFICATION.md:53 B09 learn=none: A wording precision defect in a page; no rule kind can check what a sentence claims, and the edit run records it.
+2026-11-01T01:55:06Z s=b6ad2ae1 FINDING docs/assets/site.js:codeLines learn=none: An unverified code comment; no rule kind can check a comment's truth.
+2026-11-01T02:13:32Z s=b6ad2ae1 DONE fp=0fe0fa6e95ea cov=69.3% paths=AGENTS.md,Makefile,README.md,docs/VERIFICATION.md(+3)
+2026-11-01T02:13:32Z s=b6ad2ae1 FINDING Makefile:start/detach/site learn=none: Found and fixed by rendering or reading; no rule kind checks layout or a label's precision.
+2026-11-01T02:13:32Z s=b6ad2ae1 FINDING docs/index.html:.mk-stat CLI learn=none: Found and fixed by rendering or reading; no rule kind checks layout or a label's precision.
+2026-11-01T02:13:32Z s=b6ad2ae1 FINDING docs/index.html:#measured charts learn=none: Found and fixed by rendering or reading; no rule kind checks layout or a label's precision.
+2026-11-01T02:34:17Z s=b6ad2ae1 FAIL tests.e2e.1
+2026-11-01T02:38:15Z s=b6ad2ae1 FAIL lint
+2026-11-01T02:41:06Z s=b6ad2ae1 DONE fp=eb8987b13f36 cov=69.9% paths=AGENTS.md,Makefile,README.md,docs/API.md(+8)
+2026-11-01T02:41:06Z s=b6ad2ae1 FINDING src/provider.rs:Engine::start_no_workload learn=test: lifecycle tests backup_boots_again_when_a_provision_only_boot_never_accepts_exec (fails with one boot: mutation run) and backup_fails_after_two_provision_only_b
+2026-11-01T02:41:06Z s=b6ad2ae1 FINDING .env.example:DEFUSS_CONTAINER_ENGINE learn=none: A clap env behavior; a rule cannot tell a harmful empty key from a documented one.
+2026-11-01T02:41:06Z s=b6ad2ae1 FINDING docs/assets/site.css:tab panels learn=none: Visual and interaction check done in Playwright; no gate rule renders the site.
+2026-11-01T02:41:06Z s=b6ad2ae1 FINDING docs/index.html:#measured charts learn=none: Layout defect found by rendering.
+2026-11-01T02:41:06Z s=b6ad2ae1 FINDING tests/e2e/measure.py:job_durations learn=none: Exercised by every make e2e run; the summary table is its output.
+2026-11-01T03:11:35Z s=b6ad2ae1 DONE fp=8165e882f861 cov=69.9% paths=AGENTS.md,Makefile,README.md,docs/API.md(+8)
+2026-11-01T03:11:35Z s=b6ad2ae1 FINDING docs/index.html:hero .dc-accent learn=none: A wording decision that belongs to the human.

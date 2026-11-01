@@ -7,7 +7,7 @@
 | Gate | Command | Proves | Needs |
 |---|---|---|---|
 | Lint | `make lint` | rustfmt clean; Clippy and oxlint with warnings denied; desktop TypeScript check; native extension formatting | Rust 1.99.1, Bun 1.4 |
-| Tests | `make test` | Rust contract tests (API auth/Origin/Host, spec validation, SQLite job recovery, OCI layout, layer validation, process-group timeout) and lifecycle tests against a scripted engine (rollback, crashing release, corrupt release, base change, restore failure). Guest archive and Bun builder tests. Real daemon + CLI smoke (auth, Origin rejection, failed job, single-instance lock, private files, restart, token rotation). UI interaction tests against a scripted bridge | Bun 1.4.x, Chromium, loopback listener |
+| Tests | `make test` | Rust contract tests (API auth/Origin/Host, spec validation, SQLite job recovery, OCI layout, layer validation, process-group timeout) and lifecycle tests against a scripted engine (rollback, crashing release, corrupt release, base change, restore failure). Guest archive and Bun builder tests. Real daemon + CLI smoke (auth, Origin rejection, failed job, single-instance lock, private files, restart, token rotation). UI interaction tests against a scripted bridge | Bun 1.4.x, Node 24, Chromium, loopback listener |
 | Coverage | `make coverage` | Rust line coverage of the tests plus the real daemon/CLI smoke run, floor 60% | `cargo-llvm-cov`, `llvm-tools-preview` |
 | E2E | `make e2e` | Installed artifact (`scripts/install.py`) against a real VM, then the built UI in Playwright Chromium and WebKit against the same daemon (details below) | Hypervisor, Docker Hub, npm registry, Git, openssl |
 | Registry | `cargo test --test registry -- --ignored --nocapture` | Pinned `oven/bun:1.4.4-distroless` resolves for this architecture; manifest and blob digests verify; image contains `/usr/local/bin/bun` | Docker Hub access |
@@ -50,7 +50,7 @@ CI (`.github/workflows/verify.yml`):
 
 ## Resource footprint
 
-VERIFIED on macOS 26.7.1, Apple Silicon (M5 Max), HVF, by `make e2e` on 2026-10-31 with the example app (1024 MiB, 2 vCPUs, 20 GiB storage). Peak RSS comes from the kernel for our processes (`wait4`), and from sampling `ps` every second for the engine's VM processes. The desktop app was sampled with `ps` every 0.5 s, by hand, from the `bun run desktop` bundle; `make e2e` drives the UI in Playwright instead. `make metrics` prints the numbers from the latest run.
+VERIFIED on macOS 26.7.1, Apple Silicon (M5 Max), HVF, by one `make e2e` run on 2026-10-31 with the example app (1024 MiB, 2 vCPUs, 20 GiB storage); the timings below come from a later run. Peak RSS comes from the kernel for our processes (`wait4`), and from sampling `ps` every second for the engine's VM processes. The desktop app was sampled with `ps` every 0.5 s, by hand, from the `bun run desktop` bundle; `make e2e` drives the UI in Playwright instead. `make metrics` prints the numbers from the latest run.
 
 | Process | Peak RSS |
 |---|---|
@@ -75,6 +75,24 @@ Estimate from this run, not a measured limit: the app VM's host process held 334
 | Backups of the example's `var` | under 0.1 MiB each |
 
 One app with three releases came to about 0.7 GiB (bin, engine, base blobs, releases, VM disk, the seeds of this run). A machine that never built before also needs the Bun base image seed, 136 MiB here, so plan about 0.85 GiB. UNKNOWN: how smolvm evicts image seeds. `machine prune` works per machine, and seeds from deleted apps stay in the engine cache (macOS: `~/Library/Caches/smolvm/image-seeds`). No retention policy for releases, backups or seeds exists yet.
+
+## Timings
+
+VERIFIED on the same machine by a `make e2e` run on 2026-11-01: each job of the example app as the daemon logged it, from `job started` to `job succeeded` or `job failed` (microsecond timestamps; `make metrics` prints the table of the latest run). The whole run took 76.4 s, both GUI passes included. Every run starts with an empty daemon state directory, so the first build downloads and verifies the base-image blobs from Docker Hub and installs the example's dependencies from the npm registry. The engine keeps its Bun base image seed from earlier runs, so the first build leaves out creating that seed. Network speed changes the build times.
+
+| Job | Seconds |
+|---|---|
+| Build v1, empty daemon cache | 9.53 |
+| Deploy v1 from scratch: machine created from the release image (image seed 1.04 s), booted, health check passing | 1.88 |
+| Backup | 1.12 to 1.19 |
+| Stop | 0.33 |
+| Start from stopped until the health check passes (4 starts) | 0.38 to 0.59 |
+| Restore with a safety backup | 1.17 to 1.24 |
+| Build v2 | 3.67 |
+| Deploy of an existing machine | 0.70 to 0.72 |
+| Roll back to v1 | 0.70 |
+| Crashing release: deploy refused, previous release serving again | 1.25 |
+| Delete | 0.43 |
 
 ## macOS notes
 
