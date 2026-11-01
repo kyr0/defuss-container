@@ -3,6 +3,7 @@
 WHY per-process peak via wait4 instead of sampling: sampling misses short peaks of the CLI and daemon; the kernel
 tracks the high-water mark exactly. VMs are not our children, so their host processes are sampled instead.
 """
+
 from __future__ import annotations
 
 import ctypes
@@ -36,9 +37,19 @@ def _maxrss_bytes(ru_maxrss: int) -> int:
 def _windows_peak(handle: int) -> int | None:
     class Counters(ctypes.Structure):
         _fields_ = [("cb", ctypes.c_ulong), ("PageFaultCount", ctypes.c_ulong)] + [
-            (n, ctypes.c_size_t) for n in ("PeakWorkingSetSize", "WorkingSetSize", "QuotaPeakPagedPoolUsage",
-                                           "QuotaPagedPoolUsage", "QuotaPeakNonPagedPoolUsage", "QuotaNonPagedPoolUsage",
-                                           "PagefileUsage", "PeakPagefileUsage")]
+            (n, ctypes.c_size_t)
+            for n in (
+                "PeakWorkingSetSize",
+                "WorkingSetSize",
+                "QuotaPeakPagedPoolUsage",
+                "QuotaPagedPoolUsage",
+                "QuotaPeakNonPagedPoolUsage",
+                "QuotaNonPagedPoolUsage",
+                "PagefileUsage",
+                "PeakPagefileUsage",
+            )
+        ]
+
     c = Counters()
     c.cb = ctypes.sizeof(c)
     ok = ctypes.windll.psapi.GetProcessMemoryInfo(ctypes.c_void_p(handle), ctypes.byref(c), c.cb)  # type: ignore[attr-defined]
@@ -59,8 +70,10 @@ def run(argv: list[str], env: dict[str, str] | None = None, timeout: float = 180
     proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
     out: list[bytes] = []
     err: list[bytes] = []
-    readers = [threading.Thread(target=lambda s=s, b=b: b.append(s.read()), daemon=True)
-               for s, b in ((proc.stdout, out), (proc.stderr, err))]
+    readers = [
+        threading.Thread(target=lambda s=s, b=b: b.append(s.read()), daemon=True)
+        for s, b in ((proc.stdout, out), (proc.stderr, err))
+    ]
     for r in readers:
         r.start()
     timer = threading.Timer(timeout, proc.kill)
@@ -71,17 +84,33 @@ def run(argv: list[str], env: dict[str, str] | None = None, timeout: float = 180
         timer.cancel()
     for r in readers:
         r.join()
-    return Result(proc.returncode, b"".join(out).decode(errors="replace"), b"".join(err).decode(errors="replace"), peak)
+    return Result(
+        proc.returncode,
+        b"".join(out).decode(errors="replace"),
+        b"".join(err).decode(errors="replace"),
+        peak,
+    )
 
 
 def process_rss(pid: int) -> int | None:
     """Current RSS of a process we did not start, in bytes."""
     try:
         if WINDOWS:
-            out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"], capture_output=True, text=True).stdout
+            out = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+                capture_output=True,
+                text=True,
+                check=False,  # a vanished process prints nothing; the parse below returns None
+            ).stdout
             fields = [f.strip('"') for f in out.strip().split('","')]
-            return int(fields[-1].replace(",", "").replace(".", "").split()[0]) * 1024 if len(fields) >= 5 else None
-        out = subprocess.run(["ps", "-o", "rss=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+            return (
+                int(fields[-1].replace(",", "").replace(".", "").split()[0]) * 1024
+                if len(fields) >= 5
+                else None
+            )
+        out = subprocess.run(
+            ["ps", "-o", "rss=", "-p", str(pid)], capture_output=True, text=True, check=False
+        ).stdout.strip()
         return int(out) * 1024 if out else None
     except (OSError, ValueError):
         return None
@@ -99,9 +128,16 @@ class MachineSampler:
     _thread: threading.Thread | None = None
 
     def _engine(self, *args: str) -> str | None:
-        # Short timeouts: a busy VM can stall `stats`, and one slow call must not hide a short-lived builder VM.
+        # Short timeouts: a busy VM can stall `stats`, and one slow call must not hide a short-lived
+        # builder VM.
         try:
-            p = subprocess.run([self.engine, "machine", *args], capture_output=True, text=True, timeout=5)
+            p = subprocess.run(
+                [self.engine, "machine", *args],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
         except subprocess.TimeoutExpired:
             return None
         return p.stdout if p.returncode == 0 else None
@@ -136,7 +172,9 @@ class MachineSampler:
                 if m.get("pid"):
                     self._record(name, "host_rss_bytes", process_rss(int(m["pid"])))
                 try:
-                    memory = json.loads(self._engine("stats", "--name", name, "--json") or "")["memory"]
+                    memory = json.loads(self._engine("stats", "--name", name, "--json") or "")[
+                        "memory"
+                    ]
                     self._record(name, "guest_used_bytes", int(memory["used_bytes"]))
                     self._record(name, "guest_total_bytes", int(memory["total_bytes"]))
                 except (ValueError, KeyError, TypeError):
@@ -150,7 +188,11 @@ def disk_usage(path: pathlib.Path) -> dict[str, int]:
     apparent = allocated = 0
     if not path.exists():
         return {"apparent_bytes": 0, "allocated_bytes": 0}
-    files = [path] if path.is_file() else [p for p in path.rglob("*") if p.is_file() and not p.is_symlink()]
+    files = (
+        [path]
+        if path.is_file()
+        else [p for p in path.rglob("*") if p.is_file() and not p.is_symlink()]
+    )
     for f in files:
         try:
             st = f.lstat()
@@ -170,7 +212,9 @@ def now() -> float:
 
 
 # One daemon log line per job event, ISO-8601 UTC timestamp first (src/service.rs).
-_JOB_EVENT = re.compile(r"^(\S+Z)\s+\w+\s+\S+ job (started|succeeded|failed) job=(\S+) app=(\S+)(?: action=(\w+))?")
+_JOB_EVENT = re.compile(
+    r"^(\S+Z)\s+\w+\s+\S+ job (started|succeeded|failed) job=(\S+) app=(\S+)(?: action=(\w+))?"
+)
 
 
 def job_durations(log: str) -> list[dict[str, Any]]:
@@ -187,10 +231,18 @@ def job_durations(log: str) -> list[dict[str, Any]]:
         if not m:
             continue
         at, event, job, app, action = m.groups()
-        when = datetime.datetime.fromisoformat(at.replace("Z", "+00:00"))
+        when = datetime.datetime.fromisoformat(at)  # Python 3.11+ parses the trailing Z
         if event == "started":
             started[job] = (when, app, action or "")
         elif job in started:
             begin, app, action = started.pop(job)
-            jobs.append({"app": app, "action": action, "ok": event == "succeeded", "seconds": round((when - begin).total_seconds(), 3), "start": begin.isoformat()})
+            jobs.append(
+                {
+                    "app": app,
+                    "action": action,
+                    "ok": event == "succeeded",
+                    "seconds": round((when - begin).total_seconds(), 3),
+                    "start": begin.isoformat(),
+                }
+            )
     return sorted(jobs, key=lambda j: j["start"])

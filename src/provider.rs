@@ -1,3 +1,9 @@
+//! Adapter for the smolvm CLI. Every engine action is one argv invocation of the pinned engine
+//! binary.
+//!
+//! The CLI instead of the smolmachines SDK, because the SDK documents Linux and macOS only and the
+//! CLI also covers Windows (ARCH.md). Every flag used here was checked against the 1.32.4 `--help`
+//! (docs/VERIFICATION.md).
 use crate::{ENGINE_VERSION, model::Application, process, util};
 use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
@@ -6,6 +12,9 @@ use std::{
     time::Duration,
 };
 
+/// The host's hypervisor: its name in `doctor` and a check that it is usable. The check runs before
+/// any VM work, so a missing KVM grant or a disabled hypervisor reports how to fix it instead of
+/// failing inside smolvm.
 pub trait Platform: Send + Sync {
     fn name(&self) -> &'static str;
     fn prerequisite(&self) -> Result<()>;
@@ -97,6 +106,8 @@ impl Engine {
             Box::new(Windows)
         }
     }
+    /// Refuses every engine version except [`ENGINE_VERSION`], whose CLI contract the adapter was
+    /// checked against.
     pub fn verify(&self) -> Result<()> {
         let v = self.call(&["--version".into()], 30, None)?;
         ensure!(
@@ -154,6 +165,9 @@ impl Engine {
             .as_str()
             .is_some_and(|s| s.eq_ignore_ascii_case("running")))
     }
+    /// Stops a running machine and does nothing for a stopped or missing one, so callers can stop
+    /// unconditionally. The CLI call gets 60 s more than the guest stop timeout, so the engine's
+    /// own timeout fires first.
     pub fn stop(&self, name: &str, seconds: u64, log: Option<&Path>) -> Result<()> {
         if self.exists(name)? && self.is_running(name)? {
             self.machine(
@@ -183,16 +197,16 @@ impl Engine {
         a.extend_from_slice(cmd);
         self.machine("exec", name, &a, seconds, log)
     }
-    /// Boots the machine without its workload and returns once its container accepts exec.
+    /// Boots the machine without its workload (`machine start --no-workload`) for maintenance such
+    /// as a build or a backup, and returns once its container accepts exec.
     ///
-    /// VERIFIED: once in about 30 maintenance starts (macOS, 2026-10-31) an exec issued right after smolvm 1.32.4
-    /// reported the provision-only start failed with "executable file `/usr/local/bin/bun` not found"; a later exec
-    /// works. UNKNOWN: the engine-side cause. Waiting on `bun --version` turns that race into a bounded delay.
-    /// `machine start --no-workload`, then wait until the container accepts exec.
-    /// VERIFIED (smolvm 1.32.4, e2e daemon logs of 2026-10-31 and 2026-11-01): after some provision-only starts every exec
-    /// failed with `/usr/local/bin/bun` not found, and 30 s of retries did not help; the engine log showed no
-    /// difference from a working start. HYPOTHESIS: a fresh boot recovers, as the next start of the same machine did
-    /// a second later; falsifier: the second boot fails the same way. Cause UNKNOWN (engine).
+    /// VERIFIED: (smolvm 1.32.4, macOS, e2e daemon logs of 2026-10-31 and 2026-11-01) right after a
+    /// provision-only start, exec sometimes fails with "executable file `/usr/local/bin/bun` not
+    /// found". Usually a later exec works, so the loop waits on `bun --version` for up to
+    /// `exec_wait`. After some boots every exec failed and 30 s of retries did not help, while the
+    /// engine log showed no difference from a working start; those get a second boot. HYPOTHESIS: a
+    /// fresh boot recovers, as the next start of the same machine did a second later; falsifier:
+    /// the second boot fails the same way. UNKNOWN: the cause inside the engine.
     pub fn start_no_workload(&self, name: &str, seconds: u64, log: Option<&Path>) -> Result<()> {
         let mut last = None;
         for boot in 0..2 {
@@ -220,6 +234,19 @@ impl Engine {
             .expect("two boots ran")
             .context("machine started twice but its container never accepted exec"))
     }
+    /// The `machine create` argv for an app's long-lived VM.
+    ///
+    /// - `--guest-subnet 100.96.0.0/30` puts the gateway at 100.96.0.1, which the supervisor maps
+    ///   to `host`.
+    /// - `--disk-durability full`: the machine disk holds `/app/var`, the app's authoritative data.
+    /// - `--user 0:0`: the supervisor rewrites `/etc/hosts` and links the data directories, which
+    ///   needs root.
+    /// - `--stop-timeout` is the spec's value + 5 s, so the supervisor's stop sequence (stop
+    ///   script, SIGTERM, SIGKILL) finishes before the engine powers the VM off.
+    /// - `--stop-on-exit`: a workload that exits stops the machine, so readiness fails at once
+    ///   instead of waiting.
+    /// - `/app/var` and `/app/tmp` are volumes without a host path, on the machine's own disk.
+    ///   Every host share is checked for symlinks; only `backups` and `output` are writable.
     pub fn create_args(app: &Application, root: &Path, image: &Path) -> Result<Vec<String>> {
         let dir = root.join("apps").join(&app.spec.name);
         let mut a = vec![

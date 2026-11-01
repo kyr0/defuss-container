@@ -1,3 +1,9 @@
+//! The app lifecycle as durable jobs: register, build, deploy, start, stop, rollback, backup,
+//! restore, delete.
+//!
+//! A request only stores a queued job; one of two workers runs it later and records the outcome in
+//! SQLite, so a job outlives the client that queued it. Engine and Git calls block on child
+//! processes, so job bodies run on Tokio's blocking pool.
 use crate::{model::*, oci, process, provider::Engine, store::Store, util};
 use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
@@ -10,10 +16,14 @@ use std::{
 use tokio::sync::Semaphore;
 
 pub struct Service {
+    /// The daemon's private state directory.
     pub root: PathBuf,
     pub store: Store,
     pub engine: Engine,
+    /// One permit per job worker (two); shutdown takes them all to wait for running jobs.
     pub gate: Arc<Semaphore>,
+    /// Serializes registrations, so the name and host-port checks in [`Service::register`] cannot
+    /// race.
     register_lock: std::sync::Mutex<()>,
 }
 impl Service {
@@ -23,6 +33,7 @@ impl Service {
             util::private_dir(&root.join(d))?;
         }
         let store = Store::open(&root)?;
+        // Jobs left queued or running belong to a daemon that is gone.
         store.recover_jobs()?;
         Ok(Self {
             root,
@@ -45,6 +56,8 @@ impl Service {
             !self.store.apps()?.iter().any(|a| a.spec.name == spec.name),
             "application already exists"
         );
+        // Two VMs cannot publish the same host port, so a clash is refused here and not at the
+        // first start.
         for a in self.store.apps()? {
             for p in &spec.ports {
                 ensure!(
@@ -83,6 +96,9 @@ impl Service {
         self.store.insert_app(&app)?;
         Ok(app)
     }
+    /// Stores a queued job and returns it at once; a Tokio task waits for a worker permit and then
+    /// runs it. The insert fails while the app has another queued or running job (Store's
+    /// `one_active_job` index), which the API reports as 409.
     pub fn enqueue(self: &Arc<Self>, name: &str, action: Action) -> Result<Job> {
         self.store.app(name)?;
         action.validate(name)?;
@@ -139,6 +155,9 @@ impl Service {
         });
         Ok(job)
     }
+    /// Runs one job. Every job first checks the engine version and the hypervisor, so a wrong
+    /// engine or a missing KVM grant fails before any machine is touched. Output goes to
+    /// `jobs/<id>.log`.
     fn perform(&self, j: &Job) -> Result<Value> {
         self.engine.verify()?;
         let log = self.root.join("jobs").join(format!("{}.log", j.id));
@@ -156,6 +175,9 @@ impl Service {
             Action::Start => {
                 ensure!(app.active_release.is_some(), "deploy a release first");
                 self.write_launch(&app, app.active_release.as_deref().unwrap())?;
+                // The daemon queues Start for every app that should run each time it starts. A
+                // machine whose supervisor already runs the active release is left alone, so a
+                // daemon restart does not reboot healthy apps.
                 let running = self.engine.is_running(&app.machine)?;
                 let workload_running = running
                     && self
@@ -202,15 +224,24 @@ impl Service {
                     .stop(&app.machine, app.spec.stop_timeout_seconds + 5, Some(&log))?;
                 self.engine.delete(&app.machine, Some(&log))?;
                 self.store.delete_app(&app.spec.name)?;
-                return Ok(
-                    json!({"deleted":true,"retained_artifacts":self.app_dir(&app.spec.name),"note":"Host shares and backup archives retained; VM disk deleted."}),
-                );
+                return Ok(json!({
+                    "deleted": true,
+                    "retained_artifacts": self.app_dir(&app.spec.name),
+                    "note": "Host shares and backup archives retained; VM disk deleted.",
+                }));
             }
         };
         app.last_error = None;
         self.store.save_app(&app)?;
         Ok(value)
     }
+    /// Builds one release (ARCH.md, "Build pipeline").
+    ///
+    /// On the host, Git only fetches into a bare repository and archives the commit: no checkout,
+    /// hooks disabled, `file:` transport and redirects refused. The install and build scripts run
+    /// in a disposable builder VM with private-network egress blocked, read-only `/source` and
+    /// `/helper` shares and one writable `/export`. The release is stored only after its layer
+    /// passed [`validate_app_layer`] and its image is assembled.
     fn build(&self, app: &Application, log: &Path) -> Result<Release> {
         let id = uuid::Uuid::new_v4().to_string();
         let work = tempfile::tempdir_in(self.root.join("builds"))?;
@@ -245,6 +276,8 @@ impl Service {
             app.spec.repository.clone(),
             app.spec.git_ref.clone(),
         ])?;
+        // The fetched ref is resolved to its commit once; the release records that immutable id (40
+        // hex digits for SHA-1 repositories, 64 for SHA-256).
         let commit = gitcmd(vec![
             "rev-parse".into(),
             "--verify".into(),
@@ -273,6 +306,8 @@ impl Service {
             fs::metadata(source.join("source.tar"))?.len() <= 512 * 1024 * 1024,
             "source archive exceeds 512 MiB"
         );
+        // The guest programs compiled into this binary, so the builder runs the code this daemon
+        // was built with.
         let helper = work.path().join("helper");
         fs::create_dir(&helper)?;
         fs::write(helper.join("build.mjs"), crate::BUILDER)?;
@@ -288,6 +323,7 @@ impl Service {
             "--name".into(),
             builder.clone(),
             "--image".into(),
+            // By digest, so the builder runs exactly the base that oci::pull verified.
             format!("oven/bun@{}", base.digest),
             "--net".into(),
             "--net-backend".into(),
@@ -334,6 +370,8 @@ impl Service {
             (_, Err(c)) => return Err(c.context(format!("builder {builder} cleanup failed"))),
             _ => {}
         }
+        // The builder controlled /export. A symlinked or hardlinked app.tar would make the host
+        // hash and copy a file outside the release directory (docs/SECURITY.md).
         let layer = release_dir.join("app.tar");
         ensure!(
             fs::symlink_metadata(&layer)?.file_type().is_file(),
@@ -347,7 +385,8 @@ impl Service {
                 "hardlinked app layer refused"
             );
         }
-        // Remove every builder-controlled output except the checked app layer before writing host artifacts.
+        // Remove every builder-controlled output except the checked app layer before writing host
+        // artifacts.
         for entry in fs::read_dir(&release_dir)? {
             let entry = entry?;
             if entry.file_name() != "app.tar" {
@@ -375,14 +414,31 @@ impl Service {
         self.store.add_release(&release)?;
         Ok(release)
     }
+    /// Writes `control/launch.json`, which the supervisor reads from its read-only control share at
+    /// boot: the release to unpack, its checksum, the app's environment and the stop timeout.
+    /// Switching this file and restarting is how a deploy changes code without replacing the VM or
+    /// `/app/var` (ARCH.md, "Runtime").
     fn write_launch(&self, app: &Application, release: &str) -> Result<()> {
         let r = self.store.release(release)?;
         ensure!(r.app == app.spec.name, "release belongs to another app");
         util::write_json(
             &self.app_dir(&app.spec.name).join("control/launch.json"),
-            &json!({"app":app.spec.name,"release":release,"sha256":r.layer_sha256,"env":app.spec.env,"stop_timeout_seconds":app.spec.stop_timeout_seconds}),
+            &json!({
+                "app": app.spec.name,
+                "release": release,
+                "sha256": r.layer_sha256,
+                "env": app.spec.env,
+                "stop_timeout_seconds": app.spec.stop_timeout_seconds,
+            }),
         )
     }
+    /// Switches the app to release `id` and waits until it is ready; on failure the previous
+    /// release is selected again and restarted when it was running.
+    ///
+    /// Both checks run before the app is stopped: the layer checksum (a corrupted release is
+    /// refused) and the base digest. The machine image, with its base and runtime layer, is fixed
+    /// when the machine is created, so a release on another base needs a fresh machine and is
+    /// refused here.
     fn deploy(&self, app: &mut Application, id: &str, log: &Path) -> Result<Value> {
         let release = self.store.release(id)?;
         ensure!(
@@ -437,6 +493,7 @@ impl Service {
             }
             return Err(e.context("deployment failed; previous release selected when available"));
         }
+        // Redeploying the active release keeps the rollback target.
         if previous.as_deref() != Some(id) {
             app.previous_release = previous;
         }
@@ -451,6 +508,9 @@ impl Service {
             log,
         )
     }
+    /// Waits up to 60 s until the supervisor reports release `id` as running and, with a health
+    /// check, until `GET http://127.0.0.1:<host port><path>` succeeds. Without a health check, 2 s
+    /// of running counts as ready.
     fn wait_ready_release(&self, app: &Application, id: &str, log: &Path) -> Result<()> {
         let client = reqwest::blocking::Client::builder()
             .no_proxy()
@@ -502,9 +562,9 @@ impl Service {
                     }
                 }
                 Err(e) => {
-                    // VERIFIED: `--stop-on-exit` powers the machine off when the workload exits, so the probe can no
-                    // longer reach the supervisor's status. A stopped machine cannot become ready: fail now
-                    // instead of waiting out the timeout.
+                    // VERIFIED: `--stop-on-exit` powers the machine off when the workload exits, so
+                    // the probe can no longer reach the supervisor's status. A stopped machine
+                    // cannot become ready: fail now instead of waiting out the timeout.
                     if !self.engine.is_running(&app.machine).unwrap_or(true) {
                         let logs = self
                             .engine
@@ -537,12 +597,17 @@ impl Service {
             .unwrap_or_default();
         anyhow::bail!("readiness timeout: {last}; {logs}")
     }
+    /// Stops the workload and boots the machine without it, so `/app/var` does not change while it
+    /// is archived or replaced.
     fn maintenance(&self, app: &Application, log: &Path) -> Result<()> {
         ensure!(self.engine.exists(&app.machine)?, "no machine to maintain");
         self.engine
             .stop(&app.machine, app.spec.stop_timeout_seconds + 5, Some(log))?;
         self.engine.start_no_workload(&app.machine, 180, Some(log))
     }
+    /// The supervisor archives `/app/var` into the writable backups share; the host then records
+    /// the archive's checksum and size in `backup-meta/<id>.json`, which restore checks before it
+    /// touches the machine.
     fn backup_current(&self, app: &Application, log: &Path) -> Result<Value> {
         let id = uuid::Uuid::new_v4().to_string();
         self.engine.exec(
@@ -560,7 +625,15 @@ impl Service {
             .app_dir(&app.spec.name)
             .join("backups")
             .join(format!("{id}.tar"));
-        let meta = json!({"id":id,"app":app.spec.name,"release":app.active_release,"created_at":util::now(),"sha256":util::hash_file(&path)?,"bytes":fs::metadata(&path)?.len(),"path":path});
+        let meta = json!({
+            "id": id,
+            "app": app.spec.name,
+            "release": app.active_release,
+            "created_at": util::now(),
+            "sha256": util::hash_file(&path)?,
+            "bytes": fs::metadata(&path)?.len(),
+            "path": path,
+        });
         util::write_json(
             &self.root.join("backup-meta").join(format!("{id}.json")),
             &meta,
@@ -576,6 +649,7 @@ impl Service {
         }
         Ok(())
     }
+    /// The app resumes even when the backup failed; the backup's error is reported first.
     fn backup(&self, app: &mut Application, log: &Path) -> Result<Value> {
         let restart = app.desired_running;
         self.maintenance(app, log)?;
@@ -585,6 +659,9 @@ impl Service {
         resume?;
         Ok(value)
     }
+    /// Replaces `/app/var` with a backup. Owner and checksum are checked before the app stops, a
+    /// safety backup is taken first (no safety backup, no restore), and a failed restore leaves the
+    /// app stopped so it does not run on half-restored data (ARCH.md, "Data and backups").
     fn restore(&self, app: &mut Application, id: &str, log: &Path) -> Result<Value> {
         let meta: Value =
             util::read_json(&self.root.join("backup-meta").join(format!("{id}.json")))?;
@@ -625,7 +702,9 @@ impl Service {
         if let Err(e) = result {
             app.desired_running = false;
             self.store.save_app(app)?;
-            self.engine.stop(&app.machine, 10, Some(log)).context("restore failed and maintenance machine could not stop; desired state persisted as stopped")?;
+            self.engine.stop(&app.machine, 10, Some(log)).context(
+                "restore failed and maintenance machine could not stop; desired state persisted as stopped",
+            )?;
             return Err(e.context(format!(
                 "restore failed; pre-restore backup {}",
                 safety["id"]
@@ -727,6 +806,10 @@ pub fn validate_app_layer(layer: &Path, id: &str) -> Result<()> {
 mod lifecycle_tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+    /// A stand-in for the smolvm CLI that records each call and keeps machine state in files next
+    /// to it, so the lifecycle runs end to end without a VM. Its header lists the files a test
+    /// writes to script engine faults.
+    const SCRIPTED_ENGINE: &str = include_str!("../tests/fixtures/scripted_engine.py");
     struct Harness {
         _temp: tempfile::TempDir,
         service: Service,
@@ -739,51 +822,15 @@ mod lifecycle_tests {
         let fake = root.join("fake");
         fs::create_dir(&fake).unwrap();
         let script = fake.join("engine");
-        fs::write(&script,r#"#!/usr/bin/env python3
-import json,pathlib,sys
-root=pathlib.Path(__file__).parent
-args=sys.argv[1:]
-with (root/'commands').open('a') as f:f.write(json.dumps(args)+'\n')
-state=root/'state.json'
-s=json.loads(state.read_text()) if state.exists() else {'exists':False,'running':False}
-verb=args[1]
-if verb=='ls':
- if s['exists']:print('defuss-test')
-elif verb=='status':print(json.dumps({'state':'Running' if s['running'] else 'Stopped'}))
-elif verb=='create':s['exists']=True
-elif verb=='start':
- launch=json.loads((root.parent/'state/apps/hello/control/launch.json').read_text())
- crash=(root/'crash-release').read_text() if (root/'crash-release').exists() else ''
- # A crashing workload with --stop-on-exit powers the machine off right after start.
- s['running']='--no-workload' in args or launch['release']!=crash
- if '--no-workload' in args and (root/'exec-not-ready').exists():(root/'exec-pending').write_text((root/'exec-not-ready').read_text())
- # A broken provision-only boot: no exec succeeds until the machine stops (observed in smolvm 1.32.4).
- broken=int((root/'broken-boots').read_text()) if (root/'broken-boots').exists() else 0
- if '--no-workload' in args and broken:(root/'broken-boots').write_text(str(broken-1));(root/'exec-pending').write_text('1000000')
-elif verb=='stop':
- s['running']=False
- if (root/'exec-pending').exists():(root/'exec-pending').unlink()
-elif verb=='delete':s['exists']=False
-elif verb=='logs':print('fixture logs')
-elif verb=='exec':
- if not s['running']:sys.stderr.write('machine is not running\n');sys.exit(1)
- pending=int((root/'exec-pending').read_text()) if (root/'exec-pending').exists() else 0
- if pending:(root/'exec-pending').write_text(str(pending-1));sys.stderr.write('executable file `/usr/local/bin/bun` not found in $PATH\n');sys.exit(255)
- if args[-1]=='--version':print('1.4.4');state.write_text(json.dumps(s));sys.exit(0)
- launch=json.loads((root.parent/'state/apps/hello/control/launch.json').read_text())
- command=args[args.index('--')+1:]
- if command[-1]=='probe':
-  fail=(root/'fail-release').read_text() if (root/'fail-release').exists() else ''
-  print(json.dumps({'state':'exited' if launch['release']==fail else 'running','release':launch['release']}))
- elif command[2]=='backup':
-  if (root/'fail-backup').exists():sys.exit(8)
-  (root.parent/'state/apps/hello/backups'/ (command[3]+'.tar')).write_bytes(bytes(1024))
- elif command[2]=='restore' and (root/'fail-restore').exists():sys.exit(9)
-state.write_text(json.dumps(s))
-"#).unwrap();
+        fs::write(&script, SCRIPTED_ENGINE).unwrap();
         fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
         let service = Service::open(root.join("state"), script).unwrap();
-        let spec:AppSpec=serde_json::from_value(json!({"name":"hello","repository":"https://github.com/example/app.git","mounts":root.join("shares")})).unwrap();
+        let spec: AppSpec = serde_json::from_value(json!({
+            "name": "hello",
+            "repository": "https://github.com/example/app.git",
+            "mounts": root.join("shares"),
+        }))
+        .unwrap();
         let mut app = service.register(spec).unwrap();
         app.machine = "defuss-test".into();
         service.store.save_app(&app).unwrap();
@@ -874,7 +921,8 @@ state.write_text(json.dumps(s))
         let a = release(&h, "base");
         let log = h.fake.join("log");
         h.service.deploy(&mut h.app, &a.id, &log).unwrap();
-        // The first two execs after `start --no-workload` fail as the engine was observed to do once.
+        // The first two execs after `start --no-workload` fail as the engine was observed to do
+        // once.
         fs::write(h.fake.join("exec-not-ready"), "2").unwrap();
         let backup = h.service.backup(&mut h.app, &log).unwrap();
         assert_eq!(h.service.backups("hello").unwrap()[0]["id"], backup["id"]);

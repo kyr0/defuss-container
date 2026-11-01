@@ -1,12 +1,23 @@
+//! SQLite store for applications, releases and jobs.
+//!
+//! Each record is one JSON body; only the columns that queries filter on (`app`, `state`) are real
+//! columns. The types in model.rs are therefore the schema, and a field added with a serde default
+//! needs no migration.
 use crate::{model::*, util};
 use anyhow::{Result, bail, ensure};
 use rusqlite::{Connection, OptionalExtension, params};
 use std::{path::Path, sync::Mutex};
 
+/// One connection behind a mutex, shared by the API handlers and the two job workers; every query
+/// is short.
 pub struct Store {
     db: Mutex<Connection>,
 }
 impl Store {
+    /// `synchronous=FULL` makes every commit durable before the call returns, so a job state the
+    /// API reported survives a crash or power loss. The partial unique index `one_active_job`
+    /// allows one queued or running job per app; the database enforces it, so two concurrent
+    /// requests cannot both queue a job for the same app.
     pub fn open(root: &Path) -> Result<Self> {
         util::private_dir(root)?;
         let db = Connection::open(root.join("state.sqlite3"))?;
@@ -20,6 +31,7 @@ impl Store {
     pub fn apps(&self) -> Result<Vec<Application>> {
         self.all("SELECT body FROM apps ORDER BY name")
     }
+    /// The newest 200 jobs, which bounds the `/v1/jobs` response; older jobs stay readable by id.
     pub fn jobs(&self) -> Result<Vec<Job>> {
         self.all("SELECT body FROM jobs ORDER BY rowid DESC LIMIT 200")
     }
@@ -108,6 +120,11 @@ impl Store {
         )?;
         Ok(())
     }
+    /// Marks the jobs of a daemon that exited mid-operation as interrupted. Their worker is gone,
+    /// and while they stayed queued or running, `one_active_job` would refuse every new job for
+    /// their app. VERIFIED: tests/contracts.rs
+    /// sqlite_recovers_interrupted_job_and_serializes_app_jobs refuses a second queued job,
+    /// recovers the first as interrupted, then accepts the second.
     pub fn recover_jobs(&self) -> Result<()> {
         let jobs: Vec<Job> =
             self.all("SELECT body FROM jobs WHERE state IN ('queued','running')")?;

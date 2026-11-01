@@ -168,7 +168,7 @@ make gui         # build the native app for this OS into desktop/dist-tauri-buil
 make start-gui   # open it against the `make start` daemon, starting the daemon if it is down
 ```
 
-The app shows apps, releases, logs, jobs and backups, registers apps and runs every app action: build, deploy, start, stop, rollback, backup, restore and delete. It never starts the daemon or invokes the engine itself, and closing it leaves the daemon and the machines running. While the daemon is unreachable, the app retries after 1, 2 and 4 s, doubling up to 30 s, and its header shows a Reconnect button that retries at once. Its Rust extension makes the authenticated requests, so the token never enters JavaScript.
+The app shows apps, releases, logs, jobs and backups, registers apps and runs every app action: build, deploy, start, stop, rollback, backup, restore and delete. Its window is a resizable layout built from [defuss-shadcn](https://shadcn.defuss.org) components: a sidebar, a grid of apps, the selected app with its releases and backups as a tree, and recent jobs beside a filterable log viewer. It never starts the daemon or invokes the engine itself, and closing it leaves the daemon and the machines running. While the daemon is unreachable, the app retries after 1, 2 and 4 s, doubling up to 30 s, and its header shows a Reconnect button that retries at once. Its Rust extension makes the authenticated requests, so the token never enters JavaScript.
 
 ### Application contract
 
@@ -209,7 +209,7 @@ The top-level paths `./var`, `./tmp`, `./input`, `./output` and `./etc` are rese
 | `memory_mib` | 1024 | 256 to 262144 |
 | `storage_gib` | 20 | 2 to 1024 |
 | `ports` | `[]` | up to 16 `{"host", "guest"}` pairs, unique, host port 1024 or higher |
-| `env` | `{}` | up to 128 keys; `DEFUSS_*`, `BUN_OPTIONS`, `NODE_OPTIONS` and `LD_PRELOAD` are reserved |
+| `env` | `{}` | up to 128 keys; `DEFUSS_*` is reserved for the supervisor. `BUN_OPTIONS` and the like reach only the app's processes |
 | `build` | `false` | `true` runs `scripts.build` in the builder VM |
 | `health` | none | `{"port", "path"}`; the port must be a published guest port |
 | `stop_timeout_seconds` | 30 | 5 to 240 |
@@ -249,7 +249,8 @@ make setup && make verify
 
 | Command | Runs |
 |---|---|
-| `make lint` | rustfmt, Clippy and oxlint with warnings denied, desktop type check |
+| `make format` | rustfmt, Prettier and Ruff rewrite the Rust, JS/TS/CSS/HTML/JSON and Python files |
+| `make lint` | the same formatters as a check; Clippy, oxlint and Ruff with warnings denied; desktop type check |
 | `make test` | Rust, guest helper and builder tests, daemon and CLI smoke run, UI interaction tests; no VM |
 | `make coverage` | Rust line coverage including the smoke run; the gate needs 60% |
 | `make e2e` | the installed artifact against a real VM, every CLI command, then the built UI in Playwright Chromium and WebKit |

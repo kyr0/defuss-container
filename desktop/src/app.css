@@ -1,0 +1,259 @@
+/*
+ * Layout glue around the defuss-shadcn components. Colors use the component tokens (--background,
+ * --foreground, --muted-foreground, --border, --destructive), so light and dark both follow the
+ * `dark` class on <html>.
+ * No web fonts: the Content-Security-Policy in defuss-tauri.json allows only 'self', so the system
+ * stack applies.
+ */
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+/* core.css styles the components, not the page. */
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-size: 14px;
+}
+/* .btn and the other components set `display`, which would otherwise beat the hidden attribute. */
+[hidden] {
+  display: none !important;
+}
+h1,
+h2,
+h3 {
+  margin: 0;
+}
+
+#frame {
+  height: 100dvh;
+}
+/* A nested layout takes its height from the center region it fills; the center does not size it. */
+#workspace,
+#activity {
+  height: 100%;
+}
+/* The Sidebar is built for a full-page flex row; here it fills the resizable west region. Its own
+   CSS also hides it below a 768 px viewport, which a resizable, foldable region does not need.
+   :not([data-collapsed]) keeps border-layout's rule that hides a folded region's pane in force;
+   an ID selector alone would outrank it. */
+#frame > .resizer:not([data-collapsed]) > .app-sidebar {
+  display: flex;
+  position: static;
+  height: 100%;
+  width: 100%;
+}
+/* The diagnostics entry is a button styled as a sidebar link, without the browser's button chrome. */
+button.sidebar-link {
+  width: 100%;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: start;
+}
+.brand {
+  font-weight: 700;
+  font-size: 1.05rem;
+}
+.brand-light {
+  font-weight: 400;
+  color: var(--muted-foreground);
+}
+.sidebar-footer {
+  display: grid;
+  gap: 0.25rem;
+  color: var(--muted-foreground);
+}
+.connection.online {
+  color: var(--primary);
+}
+
+.topbar .toolbar {
+  display: flex;
+  width: 100%;
+  box-sizing: border-box;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.5rem 1rem;
+  border: 0;
+  border-radius: 0;
+}
+.title h1 {
+  font-size: 1.1rem;
+}
+.eyebrow {
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  color: var(--muted-foreground);
+}
+.stat {
+  font-size: 0.8rem;
+  color: var(--muted-foreground);
+}
+.stat b {
+  color: var(--foreground);
+}
+.spacer {
+  flex: 1;
+}
+
+/* A pane stacks a heading over a component that takes the remaining height; grids and the log
+   list need a definite height to window their rows. */
+.pane {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  padding: 0.75rem;
+  box-sizing: border-box;
+}
+.pane > .data-grid,
+.pane > .virtual-list {
+  flex: 1;
+  min-height: 0;
+}
+.section-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.section-heading h3 {
+  font-size: 0.9rem;
+  margin-right: auto;
+}
+#log-title {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.section-heading span {
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+}
+#log-filter {
+  width: 9rem;
+}
+#log {
+  --virtual-list-row-height: 22px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: pre;
+}
+.notice:empty {
+  display: none;
+}
+.notice {
+  font-size: 0.85rem;
+  color: var(--muted-foreground);
+}
+.notice.error,
+.inline-error {
+  color: var(--destructive);
+}
+.inline-error {
+  margin: 0;
+  white-space: pre-wrap;
+}
+.inline-error:empty {
+  display: none;
+}
+
+.detail {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+}
+#application {
+  padding: 1rem 1rem 0;
+}
+.detail .history {
+  flex: 1;
+}
+.app-panel {
+  display: grid;
+  gap: 0.75rem;
+}
+.panel-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.repository {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--muted-foreground);
+}
+.metadata,
+.actions,
+.links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.metadata span {
+  font-size: 0.8rem;
+  color: var(--muted-foreground);
+}
+.metadata b {
+  color: var(--foreground);
+}
+.storage h3 {
+  font-size: 0.85rem;
+}
+.storage p {
+  margin: 0.25rem 0 0;
+  font-size: 0.8rem;
+  color: var(--muted-foreground);
+}
+.storage code {
+  overflow-wrap: anywhere;
+}
+.welcome {
+  display: grid;
+  justify-items: start;
+  gap: 0.5rem;
+}
+.hero-icon {
+  font-size: 2rem;
+}
+
+#detail-output {
+  max-height: 60vh;
+  overflow: auto;
+  font-size: 12px;
+}
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+.form-grid .label {
+  display: grid;
+  gap: 0.35rem;
+}
+.form-grid .wide {
+  grid-column: 1 / -1;
+}
+.form-grid .checkbox {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.muted {
+  font-size: 0.8rem;
+  color: var(--muted-foreground);
+}
+@media (max-width: 720px) {
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+}

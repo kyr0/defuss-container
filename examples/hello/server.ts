@@ -1,16 +1,37 @@
+// Example app and the e2e's workload (tests/e2e/run.py pushes it to a Git server and deploys it).
+// Each route shows one part of the application contract from the outside:
+//   /health   readiness check the deploy waits for
+//   /version  version.txt, which the e2e changes per commit to tell releases apart
+//   /counter  SQLite in ./var, which must survive redeploys, rollbacks and backup/restore
+//   /host     the `host` alias reaching a server on the host machine
+//   /output   the writable output share
+//   /shares   reads input and etc, and checks that input is read-only
+// A dependency (zod) makes the build exercise a real frozen install.
 import { z } from 'zod';
 import { Database } from 'bun:sqlite';
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 
-const log = (level: string, message: string) => console.log(`${new Date().toISOString()} ${level} hello ${message}`);
+// The log format the daemon and supervisor use: ISO-8601 UTC timestamp, level, component, message.
+const log = (level: string, message: string) =>
+  console.log(`${new Date().toISOString()} ${level} hello ${message}`);
 const read = (path: string) => (existsSync(path) ? readFileSync(path, 'utf8') : null);
-// VERIFIED: the supervisor empties tmp before every start (e2e), so a marker left by the previous run is gone.
+// VERIFIED: the supervisor empties tmp before every start (e2e), so a marker left by the previous
+// run is gone.
 const tmpEmptyAtStart = readdirSync('./tmp').length === 0;
 writeFileSync('./tmp/marker', String(Date.now()));
 
 mkdirSync('./var', { recursive: true });
 const db = new Database('./var/counter.sqlite', { create: true });
-db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS counter(id INTEGER PRIMARY KEY, value INTEGER NOT NULL); INSERT OR IGNORE INTO counter VALUES(1,0)');
+// synchronous=FULL: a counter value the app returned is on disk, so a backup taken after it
+// contains it.
+db.exec(
+  [
+    'PRAGMA journal_mode=WAL',
+    'PRAGMA synchronous=FULL',
+    'CREATE TABLE IF NOT EXISTS counter(id INTEGER PRIMARY KEY, value INTEGER NOT NULL)',
+    'INSERT OR IGNORE INTO counter VALUES(1,0)',
+  ].join('; '),
+);
 
 function inputWritable() {
   try {
@@ -23,7 +44,12 @@ function inputWritable() {
 
 const server = Bun.serve({
   hostname: '0.0.0.0',
-  port: z.coerce.number().int().min(1).max(65535).parse(process.env.PORT || 3000),
+  port: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(65535)
+    .parse(process.env.PORT || 3000),
   async fetch(request) {
     const url = new URL(request.url);
     if (url.pathname === '/health') return Response.json({ ok: true, runtime: Bun.version });
@@ -32,7 +58,8 @@ const server = Bun.serve({
       db.query('UPDATE counter SET value=value+1 WHERE id=1').run();
       return Response.json(db.query('SELECT value FROM counter WHERE id=1').get());
     }
-    if (url.pathname === '/counter') return Response.json(db.query('SELECT value FROM counter WHERE id=1').get());
+    if (url.pathname === '/counter')
+      return Response.json(db.query('SELECT value FROM counter WHERE id=1').get());
     if (url.pathname === '/host') {
       const port = Number(process.env.HOST_TEST_PORT || 8123);
       return new Response(await (await fetch(`http://host:${port}/`)).text());
@@ -49,6 +76,7 @@ const server = Bun.serve({
         tmp_empty_at_start: tmpEmptyAtStart,
         app: process.env.DEFUSS_APP,
         node_env: process.env.NODE_ENV,
+        exec_argv: process.execArgv,
       });
     }
     return new Response('defuss-container example\n');
@@ -56,6 +84,8 @@ const server = Bun.serve({
 });
 log('INFO', `listening address=${server.hostname}:${server.port}`);
 
+// SIGTERM comes from the supervisor after scripts.stop ran; closing SQLite here flushes the WAL
+// cleanly.
 function stop() {
   log('INFO', 'stopping');
   server.stop(true);

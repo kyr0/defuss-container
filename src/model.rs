@@ -1,7 +1,15 @@
+//! API and storage types with their validation.
+//!
+//! Specs and actions are validated where they enter the daemon, so every stored record is valid.
+//! Every request type uses `deny_unknown_fields`, which turns a misspelt field into an error
+//! instead of a silent default.
 use anyhow::{Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf};
 
+/// What the user registers: where the code comes from and how its VM is sized, shared and checked.
+/// `mounts` is the host directory whose `input`, `output` and `etc` subdirectories the VM sees;
+/// ports publish guest ports on the host; `health` is the HTTP readiness check a deploy waits for.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AppSpec {
@@ -59,6 +67,9 @@ pub struct Health {
     pub path: String,
 }
 
+/// The name becomes a directory under `apps/` and a segment of `/v1/apps/{name}`, so it is limited
+/// to lowercase letters, digits and `-`, starting with a letter. The VM itself gets a random
+/// `defuss-<uuid>` machine name.
 pub fn valid_name(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 48
@@ -73,6 +84,9 @@ impl AppSpec {
             valid_name(&self.name),
             "name must match [a-z][a-z0-9-]{{0,47}}"
         );
+        // Git runs on the host, so only HTTPS remotes pass: a file: URL would read host paths and
+        // an SSH remote would use the user's SSH keys. Credentials in the URL would be stored in
+        // plain text with the spec.
         let u = url::Url::parse(&self.repository)?;
         ensure!(
             u.scheme() == "https" && u.host_str().is_some(),
@@ -88,6 +102,7 @@ impl AppSpec {
         ensure!(
             !self.git_ref.is_empty()
                 && self.git_ref.len() <= 256
+                // A leading `-` would make Git parse the ref as an option.
                 && !self.git_ref.starts_with('-')
                 && !self.git_ref.chars().any(char::is_whitespace),
             "invalid git_ref"
@@ -109,6 +124,8 @@ impl AppSpec {
                 && (2..=1024).contains(&self.storage_gib),
             "resource limits outside supported range"
         );
+        // VERIFIED: smolvm caps `--stop-timeout` at 300 s (docs/VERIFICATION.md, Engine CLI
+        // contract); the daemon passes this value + 5, which stays below it.
         ensure!(
             (5..=240).contains(&self.stop_timeout_seconds),
             "stop timeout must be 5..240 seconds"
@@ -117,6 +134,7 @@ impl AppSpec {
             self.ports.len() <= 16 && self.env.len() <= 128,
             "too many ports or environment variables"
         );
+        // Host ports below 1024 need root on Linux and macOS, and the daemon runs as the user.
         let mut used = std::collections::BTreeSet::new();
         for p in &self.ports {
             ensure!(
@@ -132,18 +150,20 @@ impl AppSpec {
                     && k.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'),
                 "invalid environment key"
             );
-            ensure!(
-                !k.starts_with("DEFUSS_")
-                    && k != "BUN_OPTIONS"
-                    && k != "NODE_OPTIONS"
-                    && k != "LD_PRELOAD",
-                "reserved environment key: {k}"
-            );
+            // The supervisor sets the DEFUSS_* variables after the app's env
+            // (guest/supervisor.mjs), so an app value would be silently overwritten. Every other
+            // key, BUN_OPTIONS and LD_PRELOAD included, reaches only the app's own processes in its
+            // VM: the env is written to launch.json and never applied on the host. VERIFIED: the
+            // e2e deploys with BUN_OPTIONS and the app reports the flag in process.execArgv.
+            ensure!(!k.starts_with("DEFUSS_"), "reserved environment key: {k}");
             ensure!(
                 v.len() <= 32768 && !v.contains('\0'),
                 "invalid environment value"
             );
         }
+        // The daemon probes `http://127.0.0.1:<host port><path>` (service.rs wait_ready), so the
+        // path must be a plain absolute path without CR/LF, and the health port must be one of the
+        // published guest ports.
         if let Some(h) = &self.health {
             ensure!(
                 h.path.starts_with('/')
@@ -161,6 +181,9 @@ impl AppSpec {
     }
 }
 
+/// A finished build. Saved only after its artifacts are complete, so every stored release is
+/// deployable. The checksums are checked again before a deploy, and `base_digest` pins the base
+/// image a machine was created from.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Release {
     pub id: String,
@@ -173,6 +196,8 @@ pub struct Release {
     pub created_at: u64,
 }
 
+/// A registered app. `desired_running` is the state the daemon restores after a restart;
+/// `previous_release` is what rollback and a failed deploy switch back to.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Application {
     pub spec: AppSpec,

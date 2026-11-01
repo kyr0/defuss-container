@@ -22,17 +22,11 @@
         "capabilities": [
           {
             "identifier": "defuss-container-api",
-            "windows": [
-              "main"
-            ],
+            "windows": ["main"],
             "remote": {
-              "urls": [
-                "http://127.0.0.1:*"
-              ]
+              "urls": ["http://127.0.0.1:*"]
             },
-            "permissions": [
-              "defuss-container:allow-daemon-request"
-            ]
+            "permissions": ["defuss-container:allow-daemon-request"]
           }
         ]
       }

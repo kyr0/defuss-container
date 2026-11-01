@@ -1,5 +1,9 @@
-//! Restricted OCI builder: only the pinned oven/bun distroless base is accepted.
-//! Repository code runs inside the builder VM; this module only copies verified blobs.
+//! Restricted OCI builder: fetches the pinned `oven/bun:1.4.4-distroless` base and assembles one
+//! image per release.
+//!
+//! Repository code runs inside the builder VM; this module only downloads, checks and copies blobs.
+//! Every registry response is size-bounded and every blob is checked against its SHA-256 digest, so
+//! a release records exactly which base it was built on (docs/SECURITY.md).
 use crate::util;
 use anyhow::{Context, Result, ensure};
 use reqwest::blocking::Client;
@@ -12,7 +16,16 @@ use std::{
 };
 
 const REGISTRY: &str = "https://registry-1.docker.io/v2/oven/bun";
-const ACCEPT: &str = "application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json";
+/// Both index formats (for the tag) and both manifest formats (for the platform entry), whichever
+/// the registry returns.
+const ACCEPT: &str = concat!(
+    "application/vnd.oci.image.index.v1+json, ",
+    "application/vnd.docker.distribution.manifest.list.v2+json, ",
+    "application/vnd.oci.image.manifest.v1+json, ",
+    "application/vnd.docker.distribution.manifest.v2+json",
+);
+/// The resolved base image: its manifest digest (recorded in each release), its config and layer
+/// descriptors, and the local cache directory that holds the verified layer blobs.
 pub struct Base {
     pub digest: String,
     pub config: Value,
@@ -31,6 +44,8 @@ fn digest(v: &Value) -> Result<&str> {
 fn descriptor(kind: &str, bytes: &[u8]) -> Value {
     json!({"mediaType":kind,"digest":format!("sha256:{}",util::sha256(bytes)),"size":bytes.len()})
 }
+/// Reads a response body of at most `max` bytes, checking both the declared length and the bytes
+/// actually read.
 fn bounded(mut response: reqwest::blocking::Response, max: u64) -> Result<Vec<u8>> {
     response.error_for_status_ref()?;
     ensure!(
@@ -42,6 +57,9 @@ fn bounded(mut response: reqwest::blocking::Response, max: u64) -> Result<Vec<u8
     ensure!(b.len() as u64 <= max, "registry response too large");
     Ok(b)
 }
+/// Returns the cached blob when its size and digest still match, else downloads it into a temporary
+/// file and renames it into the cache only after the size and SHA-256 match the descriptor. A
+/// partial or tampered download never lands under its digest name.
 fn fetch_blob(client: &Client, token: &str, desc: &Value, cache: &Path) -> Result<PathBuf> {
     let d = digest(desc)?;
     let dest = cache.join(&d[7..]);
@@ -65,6 +83,9 @@ fn fetch_blob(client: &Client, token: &str, desc: &Value, cache: &Path) -> Resul
     temp.persist(&dest).map_err(|e| e.error)?;
     Ok(dest)
 }
+/// Resolves the base for the host architecture: an anonymous pull token, the tag's index, the
+/// linux/<arch> manifest (its digest checked), the config and every layer. The tag here must match
+/// [`crate::BASE_IMAGE`].
 pub fn pull(cache: &Path) -> Result<Base> {
     util::private_dir(cache)?;
     let architecture = match std::env::consts::ARCH {
@@ -144,6 +165,8 @@ pub fn pull(cache: &Path) -> Result<Base> {
         architecture,
     })
 }
+// Tar entries get mtime 0 and uid/gid 0, so the same inputs always produce the same bytes and
+// digests.
 fn append_bytes(tar: &mut tar::Builder<File>, name: &str, data: &[u8], mode: u32) -> Result<()> {
     let mut h = tar::Header::new_gnu();
     h.set_size(data.len() as u64);
@@ -167,6 +190,9 @@ fn append_file(tar: &mut tar::Builder<File>, name: &str, path: &Path) -> Result<
     Ok(())
 }
 
+/// Writes the release image: base layers, the app layer and a runtime layer with the guest
+/// programs, as an OCI layout plus Docker's `manifest.json` for smolvm's importer. Returns the
+/// SHA-256 of the image tar, which a deploy checks again before it creates a machine from it.
 pub fn assemble(base: &Base, release: &str, layer: &Path, dest: &Path) -> Result<String> {
     let parent = dest.parent().context("image parent")?;
     let runtime = parent.join("runtime.tar");
@@ -184,7 +210,8 @@ pub fn assemble(base: &Base, release: &str, layer: &Path, dest: &Path) -> Result
             crate::ARCHIVE_JS.as_bytes(),
             0o644,
         )?;
-        // VERIFIED: supervisor.mjs imports policy.mjs (packageScript); without it the workload cannot start.
+        // VERIFIED: supervisor.mjs imports policy.mjs (packageScript); without it the workload
+        // cannot start.
         append_bytes(
             &mut t,
             "opt/defuss/policy.mjs",
@@ -197,7 +224,11 @@ pub fn assemble(base: &Base, release: &str, layer: &Path, dest: &Path) -> Result
     let mut config = base.config.clone();
     for p in [layer, runtime.as_path()] {
         let hash = util::hash_file(p)?;
-        layers.push(json!({"mediaType":"application/vnd.oci.image.layer.v1.tar","digest":format!("sha256:{hash}"),"size":fs::metadata(p)?.len()}));
+        layers.push(json!({
+            "mediaType": "application/vnd.oci.image.layer.v1.tar",
+            "digest": format!("sha256:{hash}"),
+            "size": fs::metadata(p)?.len(),
+        }));
         config["rootfs"]["diff_ids"]
             .as_array_mut()
             .context("invalid base rootfs")?
@@ -210,12 +241,19 @@ pub fn assemble(base: &Base, release: &str, layer: &Path, dest: &Path) -> Result
     config["config"]["Cmd"] = json!([]);
     config["config"]["WorkingDir"] = json!("/app");
     config["config"]["User"] = json!("0:0");
-    config["config"]["Labels"] = json!({"org.opencontainers.image.base.name":crate::BASE_IMAGE,"org.opencontainers.image.base.digest":base.digest,"org.defuss.release":release});
+    config["config"]["Labels"] = json!({
+        "org.opencontainers.image.base.name": crate::BASE_IMAGE,
+        "org.opencontainers.image.base.digest": base.digest,
+        "org.defuss.release": release,
+    });
     let cfg = serde_json::to_vec(&config)?;
     let cfg_desc = descriptor("application/vnd.oci.image.config.v1+json", &cfg);
-    let manifest = serde_json::to_vec(
-        &json!({"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":cfg_desc,"layers":layers}),
-    )?;
+    let manifest = serde_json::to_vec(&json!({
+        "schemaVersion": 2,
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "config": cfg_desc,
+        "layers": layers,
+    }))?;
     let mut desc = descriptor("application/vnd.oci.image.manifest.v1+json", &manifest);
     desc["annotations"] =
         json!({"org.opencontainers.image.ref.name":format!("defuss/{release}:latest")});
@@ -233,9 +271,18 @@ pub fn assemble(base: &Base, release: &str, layer: &Path, dest: &Path) -> Result
         append_bytes(&mut t, "index.json", &index, 0o644)?;
         // smolvm's local importer uses Docker's manifest.json. Retain a complete OCI layout
         // and add this compatible index pointing to the exact same content-addressed blobs.
-        let docker = serde_json::to_vec(
-            &json!([{"Config":format!("blobs/sha256/{}",util::sha256(&cfg)),"RepoTags":[format!("defuss/{release}:latest")],"Layers":layers.iter().map(|l|format!("blobs/sha256/{}",l["digest"].as_str().unwrap().trim_start_matches("sha256:"))).collect::<Vec<_>>()}]),
-        )?;
+        let docker_layers: Vec<String> = layers
+            .iter()
+            .map(|l| {
+                let digest = l["digest"].as_str().unwrap().trim_start_matches("sha256:");
+                format!("blobs/sha256/{digest}")
+            })
+            .collect();
+        let docker = serde_json::to_vec(&json!([{
+            "Config": format!("blobs/sha256/{}", util::sha256(&cfg)),
+            "RepoTags": [format!("defuss/{release}:latest")],
+            "Layers": docker_layers,
+        }]))?;
         append_bytes(&mut t, "manifest.json", &docker, 0o644)?;
         append_bytes(
             &mut t,

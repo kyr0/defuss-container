@@ -1,3 +1,7 @@
+//! Contract tests for the library's boundaries without a VM: spec and action validation, SQLite
+//! recovery and the one-job-per-app rule, layer and OCI checks, API authentication, the process
+//! timeout and client discovery. The API tests drive the real router in process; the engine path
+//! points at nothing, so no machine is touched.
 use axum::{
     body::Body,
     http::{Request, StatusCode},
@@ -16,7 +20,14 @@ use serde_json::{Value, json};
 use std::{fs, path::Path, sync::Arc};
 use tower::ServiceExt;
 fn spec(root: &Path) -> AppSpec {
-    serde_json::from_value(json!({"name":"hello","repository":"https://github.com/example/app.git","mounts":dunce::canonicalize(root).unwrap().join("shares"),"ports":[{"host":8080,"guest":3000}],"health":{"port":3000,"path":"/health"}})).unwrap()
+    serde_json::from_value(json!({
+        "name": "hello",
+        "repository": "https://github.com/example/app.git",
+        "mounts": dunce::canonicalize(root).unwrap().join("shares"),
+        "ports": [{"host": 8080, "guest": 3000}],
+        "health": {"port": 3000, "path": "/health"},
+    }))
+    .unwrap()
 }
 fn app(root: &Path) -> Application {
     Application {
@@ -66,6 +77,12 @@ fn spec_rejects_invalid_resources_env_and_health() {
     s.cpus = 2;
     s.env.insert("DEFUSS_VAR".into(), "/secret".into());
     assert!(s.validate().is_err());
+    s.env.clear();
+    // Bun and loader options configure the app's own processes in its VM and pass through.
+    for key in ["BUN_OPTIONS", "NODE_OPTIONS", "LD_PRELOAD"] {
+        s.env.insert(key.into(), "value".into());
+    }
+    assert!(s.validate().is_ok());
     s.env.clear();
     s.ports.push(Port {
         host: 8080,
@@ -131,7 +148,8 @@ fn sqlite_recovers_interrupted_job_and_serializes_app_jobs() {
 #[test]
 fn generated_machine_uses_durable_storage_and_no_shell() {
     let t = tempfile::tempdir().unwrap();
-    // The daemon canonicalizes its state root at startup; macOS temp dirs sit below the /var symlink.
+    // The daemon canonicalizes its state root at startup; macOS temp dirs sit below the /var
+    // symlink.
     let root = dunce::canonicalize(t.path()).unwrap();
     let a = app(&root);
     let args = Engine::create_args(&a, &root, &root.join("space directory/image.tar")).unwrap();
@@ -232,10 +250,18 @@ fn oci_layout_digests_config_and_docker_compatibility() {
         digest: format!("sha256:{d}"),
         architecture: "amd64".into(),
         cache,
-        config: json!({"architecture":"amd64","os":"linux","rootfs":{"type":"layers","diff_ids":[format!("sha256:{d}")]},"config":{},"history":[]}),
-        layers: vec![
-            json!({"mediaType":"application/vnd.oci.image.layer.v1.tar","digest":format!("sha256:{d}"),"size":base_bytes.len()}),
-        ],
+        config: json!({
+            "architecture": "amd64",
+            "os": "linux",
+            "rootfs": {"type": "layers", "diff_ids": [format!("sha256:{d}")]},
+            "config": {},
+            "history": [],
+        }),
+        layers: vec![json!({
+            "mediaType": "application/vnd.oci.image.layer.v1.tar",
+            "digest": format!("sha256:{d}"),
+            "size": base_bytes.len(),
+        })],
     };
     let app = t.path().join("app.tar");
     layer(&app, &[("opt/defuss/releases/test/package.json", None)]);

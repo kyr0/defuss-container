@@ -1,3 +1,5 @@
+//! The daemon's loopback HTTP API (routes: docs/API.md). Every route sits behind [`guard`]; actions
+//! only queue a job and answer 202, and the work runs in the service's job workers.
 use crate::{model::*, service::Service};
 use axum::{
     Json, Router,
@@ -18,6 +20,9 @@ pub struct ApiState {
     pub token: String,
     pub authority: String,
 }
+/// Any error as `{"error":{"message":...}}`. The status comes from the message, because handlers
+/// return plain anyhow errors: `not found:` (Store) is 404, an active operation (`enqueue`) or a
+/// duplicate name (`register`) is 409, everything else is 400.
 #[derive(Debug)]
 pub struct ApiError(pub anyhow::Error);
 impl From<anyhow::Error> for ApiError {
@@ -38,6 +43,18 @@ impl IntoResponse for ApiError {
         (status, Json(json!({"error":{"message":message}}))).into_response()
     }
 }
+/// Authenticates every request before routing.
+///
+/// - The bearer token is compared in constant time, so response timing does not leak how much of it
+///   matched.
+/// - Any `Origin` header is refused. A browser sends one with every cross-origin request that
+///   carries an `Authorization` header, and the native clients send none, so a web page cannot use
+///   the API even if it learned the token.
+/// - `Host` must equal the bound `127.0.0.1:<port>`. A DNS-rebinding page reaches loopback under
+///   its own host name, which fails this check.
+///
+/// VERIFIED: tests/contracts.rs api_refuses_missing_or_wrong_token and
+/// api_rejects_browser_origin_and_dns_rebinding cover each refusal.
 async fn guard(State(state): State<ApiState>, request: Request, next: Next) -> Response {
     let supplied = request
         .headers()
@@ -63,6 +80,8 @@ async fn guard(State(state): State<ApiState>, request: Request, next: Next) -> R
     {
         return (StatusCode::FORBIDDEN,Json(json!({"error":{"message":"browser origins and unexpected Host headers are forbidden; use the native client"}}))).into_response();
     }
+    // Responses carry specs, environment values and logs, which are sensitive local data
+    // (docs/SECURITY.md).
     let mut response = next.run(request).await;
     response
         .headers_mut()
@@ -86,6 +105,8 @@ pub fn router(state: ApiState) -> Router {
         .layer(middleware::from_fn_with_state(state.clone(), guard))
         .with_state(state)
 }
+/// Runs engine and filesystem work, which blocks on child processes, on Tokio's blocking pool so
+/// the async threads keep serving other requests. Short SQLite reads run inline.
 async fn blocking<T: Send + 'static>(
     f: impl FnOnce() -> anyhow::Result<T> + Send + 'static,
 ) -> Result<T, ApiError> {

@@ -23,18 +23,25 @@ CLI_BIN = $(CURDIR)/$(E2E_INSTALL)/bin/defuss-container
 GUI_BIN = $(CURDIR)/desktop/dist-tauri-build/release/defuss-tauri-host
 ARGS   ?= list
 SITE_PORT ?= 63706
+# Formatters: Prettier (desktop/package.json pin) for JS/TS/CSS/HTML/JSON, Ruff (pinned here, run through uvx) for
+# Python, rustfmt for Rust. `make format` writes, `make lint` checks the same files.
+PRETTIER = desktop/node_modules/.bin/prettier
+PRETTIER_FILES = 'desktop/{src,tests}/**/*.{ts,tsx,mjs,css}' 'desktop/*.{html,json}' 'guest/*.mjs' 'tests/*.mjs' 'examples/*/*.{ts,json}'
+RUFF = uvx ruff@0.17.3
+PYTHON_DIRS = scripts tests
 
-.PHONY: help setup install start detach site stop restart status log metrics bench check lint test coverage e2e cli start-cli gui start-gui desktop native verify build
+.PHONY: help setup install start detach site stop restart status log metrics bench check format lint test coverage e2e cli start-cli gui start-gui desktop native verify build
 .DEFAULT_GOAL := help
 
 help: ## list the verbs with their usage (default goal)
 	@awk -F':.*## ' '/^[a-zA-Z0-9_ -]+:.*## /{printf "  %-12s %s\n", $$1, $$2}' $(firstword $(MAKEFILE_LIST))
 
-setup: ## rustup if missing, the toolchain pinned in rust-toolchain.toml, locked Rust/bun deps, browsers, cargo-llvm-cov
+setup: ## rustup if missing, the toolchain pinned in rust-toolchain.toml, locked Rust/bun deps, browsers, cargo-llvm-cov, uv
 	command -v cargo >/dev/null 2>&1 || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path --profile minimal --default-toolchain none
 	cargo fetch --locked
 	cd desktop && bun install --frozen-lockfile --ignore-scripts && bunx playwright install chromium webkit
 	command -v cargo-llvm-cov >/dev/null 2>&1 || cargo install cargo-llvm-cov --locked
+	command -v uvx >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh
 
 install: ## release build + checksummed engine into $(E2E_INSTALL) (the artifact e2e consumes)
 	python3 scripts/install.py --home $(E2E_INSTALL)
@@ -82,11 +89,20 @@ bench: ## guest filesystem benchmark of a deployed app: make bench APP=<name> (d
 
 check: lint ## alias of lint (earlier name)
 
-lint: ## rustfmt, Clippy (warnings fail), oxlint (warnings fail) on UI/guest/test/example JS, desktop type check
+format: ## rewrite Rust, JS/TS/CSS/HTML/JSON and Python files in the project style
+	cargo fmt --all
+	cargo fmt --manifest-path desktop/native/Cargo.toml
+	$(PRETTIER) --write --log-level warn $(PRETTIER_FILES)
+	$(RUFF) format $(PYTHON_DIRS)
+
+lint: ## format check (rustfmt, Prettier, Ruff), Clippy, oxlint and Ruff with warnings denied, desktop type check
 	cargo fmt --all -- --check
 	cargo clippy --all-targets --locked -- -D warnings
 	cargo fmt --manifest-path desktop/native/Cargo.toml -- --check
 	desktop/node_modules/.bin/oxlint --deny-warnings desktop/src desktop/tests guest tests examples/hello
+	$(PRETTIER) --check --log-level warn $(PRETTIER_FILES)
+	$(RUFF) format --check $(PYTHON_DIRS)
+	$(RUFF) check $(PYTHON_DIRS)
 	cd desktop && bunx tsc --noEmit
 
 test: ## Rust + guest helper + builder tests, daemon/CLI smoke, UI interaction tests (no VM)

@@ -1,3 +1,5 @@
+//! Child processes (Git, smolvm): argv arrays and never a shell, a hard timeout that kills the
+//! whole process tree, bounded logs and a cleaned environment.
 use anyhow::{Context, Result, bail};
 use std::{
     ffi::OsStr,
@@ -14,6 +16,9 @@ pub struct Output {
     pub stderr: String,
     pub code: i32,
 }
+/// Copies one pipe into the job log, stopping at 8 MiB per log file, and keeps the last 128 KiB in
+/// memory for the caller (docs/SECURITY.md). stdout and stderr each get a thread: reading them in
+/// turn would deadlock once the child fills the pipe that is not being read.
 fn capture(mut stream: impl Read, log: Option<std::path::PathBuf>) -> String {
     let mut tail = Vec::new();
     let mut b = [0u8; 8192];
@@ -51,6 +56,9 @@ pub fn run(
     if let Some(p) = cwd {
         c.current_dir(p);
     }
+    // The daemon's environment reaches every child, so these are removed: smolvm's cloud token and
+    // machine-name variables, and the three variables that load extra code into Bun, Node or the
+    // dynamic loader.
     for key in [
         "SMOL_CLOUD_TOKEN",
         "SMOLVM_MACHINE_NAME",
@@ -60,13 +68,17 @@ pub fn run(
     ] {
         c.env_remove(key);
     }
-    // VERIFIED: smolvm wrote ANSI color codes into job logs; NO_COLOR=1 keeps them plain (none in e2e logs).
+    // VERIFIED: smolvm wrote ANSI color codes into job logs; NO_COLOR=1 keeps them plain (none in
+    // e2e logs). GIT_TERMINAL_PROMPT=0: stdin is closed, so a repository that needs a password
+    // fails at once instead of waiting out the timeout. GIT_CONFIG_NOSYSTEM=1 skips the system
+    // gitconfig; the user's own config still applies.
     c.env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("NO_COLOR", "1");
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
+        // Its own process group, so a timeout can kill smolvm together with everything it started.
         c.process_group(0);
     }
     let mut child = c.spawn().context("launch child process")?;
@@ -78,6 +90,7 @@ pub fn run(
     let b = thread::spawn(move || capture(err, l2));
     let start = Instant::now();
     let mut timed = false;
+    // std has no wait-with-timeout, so poll every 50 ms.
     let status = loop {
         if let Some(s) = child.try_wait()? {
             break s;
@@ -110,6 +123,8 @@ pub fn run(
         code: status.code().unwrap_or(-1),
     })
 }
+/// Like [`run`], but a nonzero exit is an error that carries the last 4096 characters of stderr:
+/// enough for Git's or smolvm's message, and small enough to store in a job record.
 pub fn checked(
     program: impl AsRef<OsStr>,
     args: &[String],

@@ -1,3 +1,9 @@
+//! The CLI: one subcommand per API route, printing the daemon's JSON (text routes such as logs
+//! print raw).
+//!
+//! Names, specs and actions are checked with the daemon's own validation before a request is sent,
+//! so a mistake gets the daemon's message without a round trip. A valid name also cannot change the
+//! URL path it is placed in.
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use defuss_container::{
@@ -13,6 +19,7 @@ use std::{path::PathBuf, time::Duration};
     about = "Manage local Bun applications through defuss-containerd"
 )]
 struct Args {
+    /// The daemon's state directory, where it publishes connection.json
     #[arg(long,env="DEFUSS_CONTAINER_HOME",default_value_os_t=util::home(),global=true)]
     home: PathBuf,
     #[command(subcommand)]
@@ -20,58 +27,47 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Engine version, provider and hypervisor checks
     Doctor,
+    /// Registered apps
     List,
-    Create {
-        file: PathBuf,
-    },
-    Show {
-        name: String,
-    },
-    Releases {
-        name: String,
-    },
-    Backups {
-        name: String,
-    },
-    Logs {
-        name: String,
-    },
-    Build {
-        name: String,
-    },
-    Deploy {
-        name: String,
-        release: String,
-    },
-    Start {
-        name: String,
-    },
-    Stop {
-        name: String,
-    },
-    Rollback {
-        name: String,
-    },
-    Backup {
-        name: String,
-    },
-    Restore {
-        name: String,
-        backup: String,
-    },
+    /// Register an app spec from a JSON file
+    Create { file: PathBuf },
+    /// One app with its observed engine state
+    Show { name: String },
+    /// Successful builds of an app
+    Releases { name: String },
+    /// Backup archives of an app
+    Backups { name: String },
+    /// Last 200 workload log lines
+    Logs { name: String },
+    /// Fetch, build and store a new release
+    Build { name: String },
+    /// Start a release behind the health check; on failure the previous release returns
+    Deploy { name: String, release: String },
+    /// Set the desired state to running and start the app
+    Start { name: String },
+    /// Set the desired state to stopped and stop the app
+    Stop { name: String },
+    /// Switch to the previous code release
+    Rollback { name: String },
+    /// Archive the app's /app/var
+    Backup { name: String },
+    /// Restore a backup into /app/var, after a safety backup
+    Restore { name: String, backup: String },
+    /// Remove the app and its VM disk; host shares, releases and backups stay
     Delete {
         name: String,
         #[arg(long)]
         confirm: String,
     },
+    /// Recent jobs
     Jobs,
-    Job {
-        id: String,
-    },
-    JobLog {
-        id: String,
-    },
+    /// One job
+    Job { id: String },
+    /// The output log of one job
+    JobLog { id: String },
+    /// Wait until a job finishes; fails when it failed or was interrupted
     Wait {
         id: String,
         #[arg(long, default_value_t = 1800)]
@@ -131,14 +127,16 @@ fn main() -> Result<()> {
         Command::JobLog { id } => client.request("GET", &format!("/v1/jobs/{id}/log"), None)?,
         Command::Api { method, path, body } => {
             let body = body.map(|b| serde_json::from_str(&b)).transpose()?;
-            // Always JSON, so a text endpoint (logs) stays distinguishable from objects. VERIFIED: the GUI e2e
-            // bridge (desktop/tests/e2e.test.mjs) parses every response this way.
+            // Always JSON, so a text endpoint (logs) stays distinguishable from objects. VERIFIED:
+            // the GUI e2e bridge (desktop/tests/e2e.test.mjs) parses every response this way.
             println!(
                 "{}",
                 serde_json::to_string(&client.request(&method, &path, body)?)?
             );
             return Ok(());
         }
+        // Polls every 500 ms. A timeout ends only the wait: the job is durable and keeps running in
+        // the daemon.
         Command::Wait { id, timeout } => {
             uuid::Uuid::parse_str(&id)?;
             let start = std::time::Instant::now();

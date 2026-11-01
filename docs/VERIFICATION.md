@@ -6,8 +6,8 @@
 
 | Gate | Command | Proves | Needs |
 |---|---|---|---|
-| Lint | `make lint` | rustfmt clean; Clippy and oxlint with warnings denied; desktop TypeScript check; native extension formatting | Rust 1.99.1, Bun 1.4 |
-| Tests | `make test` | Rust contract tests (API auth/Origin/Host, spec validation, SQLite job recovery, OCI layout, layer validation, process-group timeout) and lifecycle tests against a scripted engine (rollback, crashing release, corrupt release, base change, restore failure). Guest archive and Bun builder tests. Real daemon + CLI smoke (auth, Origin rejection, failed job, single-instance lock, private files, restart, token rotation). UI interaction tests against a scripted bridge | Bun 1.4.x, Node 24, Chromium, loopback listener |
+| Lint | `make lint` | rustfmt, Prettier and Ruff format checks; Clippy, oxlint and Ruff with warnings denied; desktop TypeScript check; native extension formatting | Rust 1.99.1, Bun 1.4, uv |
+| Tests | `make test` | Rust contract tests (API auth/Origin/Host, spec validation, SQLite job recovery, OCI layout, layer validation, process-group timeout) and lifecycle tests against a scripted engine (rollback, crashing release, corrupt release, base change, restore failure). Guest archive and Bun builder tests. Real daemon + CLI smoke (auth, Origin rejection, failed job, single-instance lock, private files, restart, token rotation). UI interaction tests against a scripted bridge, served with the app's Content-Security-Policy | Bun 1.4.x, Node 24, Chromium, loopback listener |
 | Coverage | `make coverage` | Rust line coverage of the tests plus the real daemon/CLI smoke run, floor 60% | `cargo-llvm-cov`, `llvm-tools-preview` |
 | E2E | `make e2e` | Installed artifact (`scripts/install.py`) against a real VM, then the built UI in Playwright Chromium and WebKit against the same daemon (details below) | Hypervisor, Docker Hub, npm registry, Git, openssl |
 | Registry | `cargo test --test registry -- --ignored --nocapture` | Pinned `oven/bun:1.4.4-distroless` resolves for this architecture; manifest and blob digests verify; image contains `/usr/local/bin/bun` | Docker Hub access |
@@ -32,7 +32,7 @@
 10. Exercise the `api` command.
 11. Delete the app; the VM is removed and backups stay.
 
-The run fails if any `defuss-container --help` subcommand never ran. `desktop/tests/e2e.test.mjs` then drives the built `desktop/dist` in a real browser. A Playwright binding replaces Tauri IPC and calls `defuss-container api`, the same Rust client the native bridge uses, so every click reaches the live daemon. It covers the dashboard, runtime diagnostics, live status, logs, stop/start, backup and restore dialogs, the release deploy dialog, activity details, and create and delete through the form, with no console errors, page errors or failed requests. Results go to `output/e2e/`: `report.json` (steps and timings), `summary.md` and `resources.json` (peak RSS, disk), daemon and job logs, GUI logs and screenshots.
+The run fails if any `defuss-container --help` subcommand never ran. `desktop/tests/e2e.test.mjs` then drives the built `desktop/dist` in a real browser. A Playwright binding replaces Tauri IPC and calls `defuss-container api`, the same Rust client the native bridge uses, so every click reaches the live daemon. It covers the applications grid, runtime diagnostics, live status, app logs in the log list, stop/start, backup and restore and the release deploy through the releases and backups tree, a job log with its details, and create and delete through the form, with no console errors, page errors or failed requests. Results go to `output/e2e/`: `report.json` (steps and timings), `summary.md` and `resources.json` (peak RSS, disk), daemon and job logs, GUI logs and screenshots.
 
 ## Platform status
 

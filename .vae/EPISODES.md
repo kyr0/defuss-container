@@ -67,3 +67,25 @@ Wrap: EVERY lead becomes a test | .vae/VERIFY.py rule | one MEMORY line with BC,
 2026-11-01T13:25:21Z s=b6ad2ae1 FINDING .github/workflows/verify.yml:14 jobs.linux.runs-on learn=none: The comment beside the pin states the constraint and when to move it; a rule against ubuntu-latest would pin a config value, not a code invariant.
 2026-11-01T13:25:21Z s=b6ad2ae1 FINDING desktop/tests/ui.test.mjs:19 page() clock setup learn=verifier: .vae/VERIFY.py desktop.tests.clock-paused (not_regex \.clock\.install\( on desktop/tests/*.mjs) matches the old setup and not the fixed file.
 2026-11-01T13:25:21Z s=b6ad2ae1 FINDING README.md:21 B (evidence) status sentence learn=none: A status sentence that tracks CI results cannot be checked mechanically without querying CI.
+2026-11-01T13:53:23Z s=b6ad2ae1 DONE fp=4e04c78e636f cov=70.4% paths=.github/workflows/verify.yml,.prettierrc.json,Makefile,README.md(+43)
+2026-11-01T13:53:23Z s=b6ad2ae1 FINDING scripts/install.py service_install, private learn=none: A one-off equivalence probe; the strings have no runtime test on this host (systemd/Windows), so no permanent test.
+2026-11-01T13:53:23Z s=b6ad2ae1 FINDING src/service.rs lifecycle_tests SCRIPTED_ENGINE learn=none: Covered by the lifecycle tests that load it.
+2026-11-01T13:53:23Z s=b6ad2ae1 FINDING src/oci.rs ACCEPT, assemble docker manifest learn=test: Existing contract test covers the manifest.
+2026-11-01T13:53:23Z s=b6ad2ae1 FINDING src/util.rs home() doc; desktop/src/main.tsx action() comment learn=none: Comment accuracy; no mechanical check.
+2026-11-01T13:53:23Z s=b6ad2ae1 FINDING comment rewrap (main.tsx header, src/client.rs request doc, guest/build.mjs header) learn=none: One-off script, not committed.
+2026-11-01T13:53:23Z s=b6ad2ae1 FINDING src/model.rs AppSpec::validate reserved env keys learn=none: Needs the author's intent.
+2026-11-01T13:53:23Z s=b6ad2ae1 FINDING tests/e2e/measure.py job_durations, tests/e2e/gitserver.py __enter__ learn=verifier: make lint now runs ruff check on scripts and tests.
+2026-11-01T13:53:23Z s=b6ad2ae1 FINDING src/bin/defuss-container.rs subcommand help learn=test: The e2e help parse covers it.
+2026-11-01T13:53:23Z s=b6ad2ae1 FINDING src/model.rs, src/provider.rs, src/util.rs comment prefixes learn=none: The gate's docs step itself checks the prefix form.
+2026-11-01T14:19:27Z s=b6ad2ae1 DONE fp=45fca0941421 cov=70.4% paths=.github/workflows/verify.yml,.prettierrc.json,AGENTS.md,ARCH.md(+49)
+2026-11-01T14:19:27Z s=b6ad2ae1 FINDING desktop/src/app.css #frame sidebar rule learn=test: desktop/tests/ui.test.mjs 'the sidebar folds from the toolbar and its region resizes'.
+2026-11-01T14:19:27Z s=b6ad2ae1 FINDING desktop/src/app.css #workspace, #activity learn=test: desktop/tests/e2e.test.mjs select() clicks #apps grid rows.
+2026-11-01T14:19:27Z s=b6ad2ae1 FINDING desktop/src/main.tsx loadHistory learn=none: Timing-dependent; no deterministic test without a slowed bridge.
+2026-11-01T14:19:27Z s=b6ad2ae1 FINDING desktop/src/main.tsx paint selection learn=test: e2e delete flow.
+2026-11-01T14:19:27Z s=b6ad2ae1 FINDING desktop/src/main.tsx jobs subscription learn=none: Falsified HYPOTHESIS; no test per AGENTS.md (tests only for VERIFIED defects).
+2026-11-01T14:19:27Z s=b6ad2ae1 FINDING desktop/tests/ui.test.mjs CSP + console errors learn=test: Every UI test asserts no console errors.
+2026-11-01T14:19:27Z s=b6ad2ae1 FINDING AGENTS.md Project rules learn=memory: Recorded in the project rule.
+2026-11-01T14:19:27Z s=b6ad2ae1 FINDING desktop/src/df.ts header, desktop/src/api.ts NATIVE_COMMAND learn=none: The gate's docs step checks the prefix form.
+2026-11-01T14:25:28Z s=b6ad2ae1 DONE fp=9beb5f4eb182 cov=70.6% paths=.github/workflows/verify.yml,.prettierrc.json,AGENTS.md,ARCH.md(+50)
+2026-11-01T14:25:28Z s=b6ad2ae1 FINDING src/model.rs AppSpec::validate env keys learn=test: tests/contracts.rs spec_rejects_invalid_resources_env_and_health accepts the three keys; tests/e2e/run.py checks the flag reaches Bun.
+2026-11-01T14:25:28Z s=b6ad2ae1 FINDING src/bin/defuss-containerd.rs token file learn=test: control-smoke assertion.

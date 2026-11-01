@@ -1,0 +1,3 @@
+# Python here is stdlib-only scripts and e2e helpers; 100 columns matches rustfmt and Prettier.
+line-length = 100
+target-version = "py311"

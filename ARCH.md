@@ -4,7 +4,7 @@ defuss-container runs each Bun application in its own persistent Linux microVM. 
 
 ```mermaid
 flowchart LR
-  UI["Desktop UI (defuss)"] -->|Tauri IPC| Bridge["Native bridge (Rust)"]
+  UI["Desktop UI (defuss-shadcn)"] -->|Tauri IPC| Bridge["Native bridge (Rust)"]
   Bridge -->|HTTP + bearer token| D["defuss-containerd"]
   CLI["defuss-container CLI"] -->|HTTP + bearer token| D
   D --> DB[("SQLite: apps, releases, jobs")]

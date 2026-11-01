@@ -1,7 +1,7 @@
 {
   "name": "defuss-container-desktop",
   "version": "0.1.0",
-  "description": "defuss-container desktop client: defuss UI packaged with defuss-tauri",
+  "description": "defuss-container desktop client: defuss-shadcn UI packaged with defuss-tauri",
   "license": "MIT",
   "author": "Aron Homberg",
   "packageManager": "bun@1.4.4",
@@ -17,12 +17,16 @@
   },
   "dependencies": {
     "@tauri-apps/api": "2.12.1",
-    "defuss": "3.4.9"
+    "defuss": "3.4.9",
+    "defuss-shadcn": "0.9.11"
   },
   "devDependencies": {
+    "defuss-morph": "0.2.0",
+    "defuss-query": "0.2.0",
     "defuss-tauri": "0.3.0",
     "oxlint": "1.90.0",
     "playwright": "1.56.1",
+    "prettier": "3.9.10",
     "typescript": "5.9.3",
     "vite": "7.1.12"
   }

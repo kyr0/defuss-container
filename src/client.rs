@@ -1,3 +1,4 @@
+//! Blocking HTTP client for the daemon's loopback API, shared by the CLI and the desktop bridge.
 use crate::{model::Connection, util};
 use anyhow::{Result, ensure};
 use serde_json::Value;
@@ -8,6 +9,10 @@ pub struct Client {
     http: reqwest::blocking::Client,
 }
 impl Client {
+    /// Reads the address and token the running daemon wrote to `connection.json`. The file is
+    /// validated before the token is used: only `http://127.0.0.1:<port>/` and a 64-hex-digit
+    /// (256-bit) token are accepted, so an edited file cannot send the token to another host.
+    /// VERIFIED: tests/contracts.rs client_rejects_remote_discovery_address.
     pub fn connect(root: &Path) -> Result<Self> {
         let connection: Connection = util::read_json(&root.join("connection.json"))?;
         let url = url::Url::parse(&connection.address)?;
@@ -28,6 +33,8 @@ impl Client {
         );
         Ok(Self {
             connection,
+            // No proxy and no redirects: proxy variables in the environment would route the token
+            // through the proxy, and a redirect could carry the request to another address.
             http: reqwest::blocking::Client::builder()
                 .no_proxy()
                 .redirect(reqwest::redirect::Policy::none())
@@ -35,6 +42,9 @@ impl Client {
                 .build()?,
         })
     }
+    /// Sends one API call. Only GET and POST under `/v1/` without query, fragment, backslash or
+    /// `..` segment pass, the same shape the daemon routes. A text response (job and app logs)
+    /// comes back as a JSON string.
     pub fn request(&self, method: &str, path: &str, body: Option<Value>) -> Result<Value> {
         ensure!(
             matches!(method, "GET" | "POST")

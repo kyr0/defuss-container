@@ -1,3 +1,6 @@
+//! Network check of the real base image, ignored by default: `cargo test --test registry --
+//! --ignored`. It proves the pinned tag still resolves for this architecture and still ships Bun at
+//! the path the guest uses.
 use defuss_container::oci;
 #[test]
 #[ignore = "downloads the real pinned Bun base; explicit network verification"]

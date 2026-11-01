@@ -28,6 +28,10 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.4
+      # `make lint` runs Ruff through uvx.
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: 0.13.0
       - uses: taiki-e/install-action@cargo-llvm-cov
       - name: Give the runner user /dev/kvm
         run: |

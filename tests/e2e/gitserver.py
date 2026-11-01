@@ -4,6 +4,7 @@ WHY a local server instead of a hosted repository: the daemon only accepts HTTPS
 `--depth=1`, which the dumb HTTP protocol cannot serve. A self-signed loopback server keeps the e2e hermetic
 (no account, no push) while exercising the same fetch path as a real remote.
 """
+
 from __future__ import annotations
 
 import http.server
@@ -13,6 +14,7 @@ import shutil
 import ssl
 import subprocess
 import threading
+from typing import Self
 
 
 def find_openssl() -> str:
@@ -20,7 +22,10 @@ def find_openssl() -> str:
     if found:
         return found
     # Git for Windows ships OpenSSL beside its other Unix tools.
-    for candidate in (r"C:\Program Files\Git\usr\bin\openssl.exe", r"C:\Program Files\OpenSSL\bin\openssl.exe"):
+    for candidate in (
+        r"C:\Program Files\Git\usr\bin\openssl.exe",
+        r"C:\Program Files\OpenSSL\bin\openssl.exe",
+    ):
         if os.path.exists(candidate):
             return candidate
     raise RuntimeError("openssl not found: needed to create the e2e Git server certificate")
@@ -29,16 +34,33 @@ def find_openssl() -> str:
 def make_certificate(directory: pathlib.Path) -> tuple[pathlib.Path, pathlib.Path]:
     cert, key = directory / "cert.pem", directory / "key.pem"
     subprocess.run(
-        [find_openssl(), "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "2", "-subj", "/CN=127.0.0.1",
-         "-addext", "subjectAltName=IP:127.0.0.1", "-keyout", str(key), "-out", str(cert)],
-        check=True, capture_output=True,
+        [
+            find_openssl(),
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-nodes",
+            "-days",
+            "2",
+            "-subj",
+            "/CN=127.0.0.1",
+            "-addext",
+            "subjectAltName=IP:127.0.0.1",
+            "-keyout",
+            str(key),
+            "-out",
+            str(cert),
+        ],
+        check=True,
+        capture_output=True,
     )
     return cert, key
 
 
 class _Handler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
-    server: "GitServer"
+    server: GitServer
 
     def do_GET(self) -> None:
         self._backend()
@@ -63,13 +85,23 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         path, _, query = self.path.partition("?")
         body = self._body()
         env = {
-            **os.environ, "GIT_PROJECT_ROOT": str(self.server.root), "GIT_HTTP_EXPORT_ALL": "1",
-            "PATH_INFO": path, "QUERY_STRING": query, "REQUEST_METHOD": self.command,
-            "CONTENT_TYPE": self.headers.get("Content-Type", ""), "CONTENT_LENGTH": str(len(body)),
-            "REMOTE_ADDR": "127.0.0.1", "GIT_PROTOCOL": self.headers.get("Git-Protocol", ""),
+            **os.environ,
+            "GIT_PROJECT_ROOT": str(self.server.root),
+            "GIT_HTTP_EXPORT_ALL": "1",
+            "PATH_INFO": path,
+            "QUERY_STRING": query,
+            "REQUEST_METHOD": self.command,
+            "CONTENT_TYPE": self.headers.get("Content-Type", ""),
+            "CONTENT_LENGTH": str(len(body)),
+            "REMOTE_ADDR": "127.0.0.1",
+            "GIT_PROTOCOL": self.headers.get("Git-Protocol", ""),
             "HTTP_CONTENT_ENCODING": self.headers.get("Content-Encoding", ""),
         }
-        result = subprocess.run(["git", "http-backend"], input=body, env=env, capture_output=True)
+        # check=False: http-backend reports Git errors in its CGI response, which is passed on to
+        # the client.
+        result = subprocess.run(
+            ["git", "http-backend"], input=body, env=env, capture_output=True, check=False
+        )
         out = result.stdout
         sep = b"\r\n\r\n" if b"\r\n\r\n" in out else b"\n\n"
         head, _, payload = out.partition(sep)
@@ -90,7 +122,9 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
-    def log_message(self, *args: object) -> None:  # requests are visible in the daemon's job logs instead
+    def log_message(
+        self, *args: object
+    ) -> None:  # requests are visible in the daemon's job logs instead
         pass
 
 
@@ -111,7 +145,7 @@ class GitServer(http.server.ThreadingHTTPServer):
     def url(self, name: str) -> str:
         return f"https://127.0.0.1:{self.server_address[1]}/{name}.git"
 
-    def __enter__(self) -> "GitServer":
+    def __enter__(self) -> Self:
         self.thread.start()
         return self
 
