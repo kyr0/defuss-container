@@ -73,4 +73,12 @@ RULES = [{
     "kind": "command",
     "command": "python3 .vae/checks/tauri-versions.py",
     "claim": "@tauri-apps/api and the tauri crate share major.minor, which tauri-cli requires to build the app",
+}, {
+    # VERIFIED 2026-11-01: Playwright 1.56's injected clock calls resume() on install and catches up with real time at
+    # least every 100 ms; CI macOS fired a 2 s retry early (3 !== 2). A 150 ms probe delay reproduced it; pauseAt fixed it.
+    "id": "desktop.tests.clock-paused",
+    "kind": "not_regex",
+    "glob": "desktop/tests/*.mjs",
+    "pattern": r"\.clock\.install\(",
+    "claim": "UI tests freeze the fake clock with pauseAt, so timers fire only through runFor and never on real time",
 }]

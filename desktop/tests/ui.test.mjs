@@ -13,7 +13,10 @@ before(async()=>{
  browser=await chromium.launch({headless:true,executablePath:process.env.CHROME_EXECUTABLE||undefined,args:['--no-sandbox','--disable-dev-shm-usage']});
 });
 after(async()=>{await browser?.close();await new Promise(resolve=>server?.close(resolve));});
-async function page(t,offline=false,{clock=false}={}){const p=await browser.newPage({viewport:{width:1365,height:1000}});t.after(()=>p.close());if(clock)await p.clock.install();await p.addInitScript(({offline})=>{
+// VERIFIED: an installed Playwright 1.56 clock keeps running in real time (its injected controller
+// calls resume()) and catches up at least every 100 ms, so a slow runner fired the 2 s retry early (CI macOS, 3 !== 2).
+// pauseAt() freezes it: the page starts at tick 0 and timers fire only through runFor.
+async function page(t,offline=false,{clock=false}={}){const p=await browser.newPage({viewport:{width:1365,height:1000}});t.after(()=>p.close());if(clock)await p.clock.pauseAt(Date.now());await p.addInitScript(({offline})=>{
  const app={spec:{name:'hello',repository:'https://github.com/example/hello.git',git_ref:'main',memory_mib:1024,cpus:2,mounts:'/home/user/shares',ports:[{host:8080,guest:3000}]},active_release:'11111111-1111-4111-8111-111111111111',previous_release:null,desired_running:true,last_error:null};
  window.__requests=[];window.__commands=new Set();window.__attempts=0;window.__offline=offline;const apps=[app],jobs=[];
  window.__TAURI_INTERNALS__={invoke:async(command,args)=>{window.__commands.add(command);if(args?.path==='/v1/apps'&&args.method==='GET')window.__attempts++;if(window.__offline)throw new Error('Daemon unavailable');if(command!=='plugin:defuss-container|daemon_request')throw new Error('unexpected native command');window.__requests.push(args);const {method,path,body}=args;

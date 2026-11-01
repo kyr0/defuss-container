@@ -63,3 +63,7 @@ Wrap: EVERY lead becomes a test | .vae/VERIFY.py rule | one MEMORY line with BC,
 2026-11-01T02:41:06Z s=b6ad2ae1 FINDING tests/e2e/measure.py:job_durations learn=none: Exercised by every make e2e run; the summary table is its output.
 2026-11-01T03:11:35Z s=b6ad2ae1 DONE fp=8165e882f861 cov=69.9% paths=AGENTS.md,Makefile,README.md,docs/API.md(+8)
 2026-11-01T03:11:35Z s=b6ad2ae1 FINDING docs/index.html:hero .dc-accent learn=none: A wording decision that belongs to the human.
+2026-11-01T13:25:21Z s=b6ad2ae1 DONE fp=67618a64de94 cov=69.9% paths=.github/workflows/verify.yml,README.md,desktop/tests/ui.test.mjs
+2026-11-01T13:25:21Z s=b6ad2ae1 FINDING .github/workflows/verify.yml:14 jobs.linux.runs-on learn=none: The comment beside the pin states the constraint and when to move it; a rule against ubuntu-latest would pin a config value, not a code invariant.
+2026-11-01T13:25:21Z s=b6ad2ae1 FINDING desktop/tests/ui.test.mjs:19 page() clock setup learn=verifier: .vae/VERIFY.py desktop.tests.clock-paused (not_regex \.clock\.install\( on desktop/tests/*.mjs) matches the old setup and not the fixed file.
+2026-11-01T13:25:21Z s=b6ad2ae1 FINDING README.md:21 B (evidence) status sentence learn=none: A status sentence that tracks CI results cannot be checked mechanically without querying CI.

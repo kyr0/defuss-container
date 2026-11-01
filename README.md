@@ -5,8 +5,6 @@
 
 Run each of your Bun applications in its own Linux microVM on your own computer: built from a Git commit, deployed with a health check, and managed through a local daemon, a CLI and a desktop app.
 
-The project site at [container.defuss.org](https://container.defuss.org) explains the purpose, the design and the measured performance and memory use; its source is [docs/index.html](docs/index.html). `make site` serves it locally on http://127.0.0.1:63706.
-
 ## TL;DR
 
 You want to run your own Bun services on your machine. Their install and build scripts should not run on the host, a release that fails its health check should not stay deployed, and the data should survive deploys. You also do not want to install Docker or Podman for it.
@@ -20,7 +18,7 @@ defuss-container builds an HTTPS Git repository inside a disposable microVM and 
 - **Durable jobs.** Every action returns a job at once. Jobs outlive the CLI and the desktop app, and a daemon restart marks unfinished jobs interrupted and brings each app back to its desired state.
 - **Local only.** The API listens on `127.0.0.1:63705`, rejects browser origins and rotates its 256-bit token on every start. The token never reaches JavaScript or a guest.
 
-Status on 2026-11-01: release 0.1.0, the first source release. The full end-to-end suite (`make e2e`) passes on macOS 26.7.1, Apple Silicon. The CI jobs for Linux KVM and Windows WHP exist but have not run yet. There are no signed or notarized binaries. Details: [docs/VERIFICATION.md](docs/VERIFICATION.md#platform-status).
+Status: release 0.1.0, the first source release. The full end-to-end suite (`make e2e`) passes on macOS 26.7.1, Apple Silicon. The CI jobs for Linux KVM and Windows WHP have not passed yet. There are no signed or notarized binaries. Details: [docs/VERIFICATION.md](docs/VERIFICATION.md#platform-status).
 
 ## Quick start
 

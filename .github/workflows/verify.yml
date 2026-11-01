@@ -7,8 +7,11 @@ on:
 
 jobs:
   # Full gate on Linux, guest e2e included: hosted Linux runners expose /dev/kvm.
+  # VERIFIED: ubuntu-latest resolved to Ubuntu 26.04 on 2026-11-01, which the pinned Playwright 1.56.1 rejects
+  # ("does not support chromium on ubuntu26.04-x64"); its platform table ends at ubuntu24.04. Move this pin together
+  # with a Playwright upgrade.
   linux:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
